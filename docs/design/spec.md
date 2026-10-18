@@ -37,7 +37,7 @@ Version 1.1 · 2026-10-12 · Owner decisions and review fixes merged (see "Owner
 | G6 | "See exactly what you'll sign" accordion | Journal + Glowtide | Add-a-wallet step 2 |
 | G7 | Prefetch the bottle on the Shore; never gate the reveal on an animation | Glowtide (+ repo fix b1d8a34) | Discover |
 | G8 | "No shaking needed" help sheet and single-activation Uncork | Glowtide | Discover |
-| G9 | Seeded one-of-a-kind silhouette (Classic / Flask / Gourd) from SHA-256(messageId). No rarity. The same art in the app, the share card and the on-chain SVG | Glowtide (rarity removed) | Bottle rig, Chest, Detail, contract |
+| G9 | Seeded one-of-a-kind silhouette (Classic / Flask / Gourd) from SHA-256(messageId). No rarity. The same art in the app and the share card, and the same shape in the keepsake's hosted picture | Glowtide (rarity removed) | Bottle rig, Chest, Detail, contract |
 | G10 | "Seal automatically when I keep" setting, plus a batch-sealing list | Glowtide | Settings, Claim, wallet step 3 |
 | G11 | Private "Who's it for?" label, shown only to the sender | Glowtide | Compose (Someone specific), Gift link, notifications |
 | G12 | Gift link expires after 30 days and washes back into the sender's chest; the sender can call it back | Journal | Gift link, Chest |
@@ -294,7 +294,11 @@ The Shore and Cast success draw the rig too, so no Lottie ships (decided 2026-10
 - byte 0 mod 3 picks Classic, Flask or Gourd;
 - byte 1 adds a ±6° hue jitter within the writer's chosen tint.
 
-The same function is ported to the contract's `tokenURI` SVG and to the web pages. There is **no rarity**. The copy says "one of a kind", never "rare".
+The web pages port the same function. A keepsake uses byte 0 only (decided 2026-10-18):
+- Its `tokenURI` is JSON the contract builds on-chain: the words, cast date, pen name, verified mark, shape and glass.
+- Its `image` is a hosted picture, one per shape and glass, at `https://bottling-messages.web.app/keepsakes/<shape>-<glass>.png`.
+
+So the hue jitter is app-only. There is **no rarity**. The copy says "one of a kind", never "rare".
 
 **Scenery:**
 - Moon: a soft disc (moon at 85%) with a 64dp halo, top-right of the dome. Never a face.
@@ -329,17 +333,19 @@ Primary copy avoids crypto jargon. Detail rows name each technical term exactly 
 | Found | Someone uncorked it. One finder at a time: the find holds it for 7 days | `status = found`, `foundAt` (when the hold began), `findCount`; the finder's `finds/{messageId}_{uid}` (`held`, `thrown_back` or `reported`) and the day's `daily/{uid}_{date}` |
 | Not kept · 5d left | The finder hasn't kept it; it drifts back after 7 days (G3) | Worked out as `foundAt` + 7 days, never stored; an expired hold is findable again |
 | Kept | Claimed. In your chest, not on-chain. Keeping is for good: a kept bottle never drifts again | `messages/{id}.status = kept` and `keptAt` (never removed); the finder's find `kept`; `claims/{messageId}` (`keeperUid`, `status = pending_wallet`, `keptAt`), which only the keeper reads |
-| Waiting · 5h | Safety check: a bottle seals only once it's 24 hours old, counted from its cast (G1). An older bottle seals as soon as it's kept to a wallet | `claims.status = cooling`, `sealAfter = messages.createdAt + 24h` |
-| Sealing… | Mint transaction sent | `status = minting` |
-| Sealed | Minted to your receiving wallet | `status = minted`, `txHash`, `tokenId` |
-| Keepsake | The NFT. The details row reads "Keepsake (NFT · ERC-721)" | — |
+| Waiting · 5h | Safety check: a bottle seals only once it's 24 hours old, counted from its cast (G1). An older bottle seals as soon as it's kept to a wallet | Asking to seal moves the claim from `pending_wallet` (or `failed`) to `status = cooling`, with `sealAfter = messages.createdAt + 24h` and `to`, the keeper's linked wallet it seals to. The rules check that update; every later status is the Worker's, whose cron mints one claim a minute (decided 2026-10-18) |
+| Sealing… | Mint transaction sent | `status = minting`, `txHash`, `nonce` |
+| Sealed | Minted to your wallet | `status = minted`, `tokenId`, `txHash`, `mintedAt`; the bottle's `messages/{id}.sealedAt`, which only the Worker writes |
+| Sealing hit a snag | The mint failed; the bottle stays kept | `status = failed`, `error`. Asking again moves it back to `cooling` |
+| Sealing · delayed | The minter is low on funds, or a send was refused; the Worker keeps trying | `delayedSince` on the claim |
+| Keepsake | The NFT. The details row reads "Keepsake (NFT · ERC-721)" | `BottleCastKeepsakes` on Base. Token ids count up from 1, and `tokenURI` is on-chain JSON with a hosted picture (§1.6) |
 | Bottled by a verified account ✓ | On every keepsake record: proof that a signed-in BottleCast account wrote it, without saying which. Drawn as the check on the wax seal | A keyed hash written on-chain at mint: HMAC-SHA256 with a Worker secret over the writer's uid and the messageId, so a writer's keepsakes can't be linked to each other. Never a name, email, photo or raw uid |
 | Pen name (on a bottle) | Shown only if the writer signed that bottle with it at cast time; changing settings later never changes a cast bottle or its keepsake | `messages/{id}.penName` snapshot (null = "— A stranger at sea"), copied on-chain at mint |
 | Sealable | The writer's per-bottle choice on Preview: "Let the finder seal this as a keepsake" (on by default) | `messages/{id}.sealable`; false = it can be kept but never sealed |
 | View on Basescan | The button that opens a keepsake or wallet on the block explorer: basescan.org (debug builds: sepolia.basescan.org) | — |
 | Base | The network keepsakes are sealed on in release builds; BottleCast pays the fee. Polygon PoS is a later drop-in swap (same contract; only the label and explorer change) | Base mainnet, chainId 8453 |
 | Test network | Debug builds only: keepsakes are sealed on Base Sepolia and carry the "Test network" chip. Never shown in release builds | chainId 84532 |
-| Prove it's yours | A free signature that links a wallet to the account | SIWE (EIP-4361) message written by the Worker (`/wallet/nonce`), signed with plain `personal_sign`, verified by the Worker (`/wallet/link`; EIP-1271 for smart wallets). Not Reown Auth or SIWX |
+| Prove it's yours | A free signature that links a wallet to the account | SIWE (EIP-4361) message written by the Worker (`/wallet/nonce`), signed with plain `personal_sign`, verified by the Worker (`/wallet/link`; EIP-1271 for smart wallets). Not Reown Auth or SIWX. The Worker then writes `users/{uid}/wallets/{address}`, with `receiving` on exactly one, and `walletIndex/{address}` → uid. The id is the lowercase address with no chain prefix, since the Firebase project implies the chain. Only the Worker writes either |
 
 ### 1.8 Copy rules
 - Sentence case. No emoji in labels.
@@ -842,14 +848,14 @@ Full-height ModalBottomSheet. Steps slide horizontally (300ms). Steps 2–3 have
 Step 1:
 - Title and body.
 - A 120dp mini diagram: a 48dp avatar scallop with thin glass lines to two 32dp wallet chips, one solid and one dashed.
-- Two option ListItems (surface, 16dp radius, 72dp, 12dp gap), each with a 40dp icon, titleMedium title, bodyMedium support and a chevron.
+- One option ListItem (surface, 16dp radius, 72dp) with a 40dp icon, titleMedium title, bodyMedium support and a chevron.
 - An expandable "What's a wallet?" row.
 - A text button "Not now — keep bottles in my chest".
 
 Step 1 copy:
 - "Add a wallet" / "Your BottleCast account stays the same. A wallet is just a place to keep keepsakes — add as many as you like and pick one to receive them."
-- Option a: "Connect a wallet app" / "MetaMask, Rainbow, Coinbase Wallet and more". This opens the Reown AppKit picker, themed with our tokens. AppKit only connects the wallet and asks it to sign: the Worker writes the SIWE (EIP-4361) message and verifies the plain `personal_sign` signature. No Reown Auth, one-click auth or SIWX, because Reown's free plan caps those at 500 monthly users and cuts off at the limit. A plain signature also needs no network switch in the wallet.
-- Option b: "Create one with Google" / "A wallet tied to your sign-in. Nothing to install." [Coming soon chip, moonContainer]. It sits behind a remote flag until a free embedded-wallet tier is confirmed.
+- The option: "Connect a wallet app" / "MetaMask, Rainbow, Coinbase Wallet and more". This opens the Reown AppKit picker, themed with our tokens. AppKit only connects the wallet and asks it to sign: the Worker writes the SIWE (EIP-4361) message and verifies the plain `personal_sign` signature. No Reown Auth, one-click auth or SIWX, because Reown's free plan caps those at 500 monthly users and cuts off at the limit. A plain signature also needs no network switch in the wallet.
+- No embedded wallet: "Create one with Google" was dropped (decided 2026-10-18). Someone without a wallet keeps their bottles in their chest until they add one.
 - "What's a wallet?" → "Think of it as a keyring for digital things. It lives in an app you control — BottleCast can never move anything out of it."
 
 Step 2, "Prove it's yours":
@@ -879,9 +885,8 @@ States:
 - Already linked to another account: an error banner "This wallet belongs to another BottleCast account. Unlink it there first." Accounts are never merged.
 - No wallet app installed: "No wallet app on this phone yet." plus the explainer.
 - Nonce expired: "That took a while — let's try again."
-- Offline: the options are disabled.
+- Offline: the option is disabled.
 - Guest: sign-in first.
-- Google option enabled by the flag: skips step 2, shows "Creating your wallet…", then step 3.
 
 **3.9b Wallets: one account, many wallets** (from Me or Settings)
 

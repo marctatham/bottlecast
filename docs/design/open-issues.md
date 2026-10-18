@@ -6,9 +6,9 @@ When an item is settled, record the answer in [decisions.md](decisions.md), fix 
 
 ## Questions for the owner
 
-- [ ] **Board or spec where they differ** (Slices 6 and 7)
-  - Spec §6 lets the spec win for the three-step wallet sheet (slice 6) and Gift-Compose's own pen-name switch (slice 7). The owner may prefer a board in either.
-  - Proposed: the spec, unless the owner picks the board. For slices 2 and 3 the owner chose the spec (2026-10-13 and 2026-10-14, see [decisions.md](decisions.md)).
+- [ ] **Board or spec where they differ** (Slice 7)
+  - Spec §6 lets the spec win for Gift-Compose's own pen-name switch (slice 7). The owner may prefer the board.
+  - Proposed: the spec, unless the owner picks the board. The owner chose the spec for slices 2, 3 and 4 (2026-10-13, 2026-10-14 and 2026-10-15), and for slice 6's three-step wallet sheet (2026-10-18). See [decisions.md](decisions.md).
 
 - [ ] **Review and deploy the Terms and Community guidelines** (Slice 9, before any release)
   - Slice 3's sign-in sheet and first cast link to `terms.html` and `guidelines.html`, which are drafted as hobby-project boilerplate on the local branch `web-terms-drafts`, under `web/public/`. Until they're deployed, those links don't open anything.
@@ -21,10 +21,6 @@ When an item is settled, record the answer in [decisions.md](decisions.md), fix 
     - allow `com.bottlecast.app` and `com.bottlecast.app.debug` (slice 7 adds the web origin);
     - leave Reown Auth, email and social login off, since the Starter plan caps those at 500 monthly users.
   - Put the ID in `android/local.properties` as `reownProjectId=…`, never in the repo. Slice 6 reads it into `BuildConfig`.
-
-- [ ] **When the 24-hour safety check starts** (Slice 6)
-  - The spec and the Claim-Waiting board count from the cast. The Keepsake-Detail board assumed the find, though its dates fit either reading.
-  - Options: from the cast, or from the find. Proposed: from the cast (spec §1.7).
 
 - [ ] **Before Base mainnet** (Slice 6)
   - [ ] Who funds the minter. While it's empty, seals wait with "Sealing · delayed" (spec §3.8b).
@@ -76,7 +72,8 @@ When an item is settled, record the answer in [decisions.md](decisions.md), fix 
     - measure the real invocations again, with Firestore REST and the Firebase JWKS in them.
 
     In reserve: keccak as WebAssembly, and the SIWE check on-chain through `eth_call`.
-  - Still open: serialising the single minter's nonce. The options are cron-only minting, or a Durable Object that owns it. Someone also has to watch the minter's balance (the Base Sepolia faucet gives 0.1 ETH per rolling 24 hours).
+  - The nonce is settled (2026-10-18, [decisions.md](decisions.md)): minting runs only in the once-a-minute cron, one claim per run under a Firestore lease, so the single minter's nonce never races.
+  - Still open: someone has to watch the minter's balance (the Base Sepolia faucet gives 0.1 ETH per rolling 24 hours).
 
 - [ ] **Queued casts refused after a restart** (Slice 9)
   - An offline cast is queued in Firestore's offline cache. If the app is closed before the server answers, and the server then refuses it (the daily cap, say, or Terms that changed), nothing tells the writer, and the words aren't restored.
@@ -92,20 +89,6 @@ When an item is settled, record the answer in [decisions.md](decisions.md), fix 
   - From slice 6, keepsakes already sealed on-chain can't be erased.
   - Proposed: say all of this in the privacy policy and on the data-deletion page. An admin script could clear a deleted account's reports once they're resolved.
 
-- [ ] **"Create one with Google"** (Slices 5 and 6)
-  - The embedded-wallet option on Add a wallet stays "Coming soon" behind a remote flag until a free embedded-wallet tier is confirmed, so linking an existing wallet is the only path for now.
-  - It hangs on the slice 5 spike: does Privy's free plan accept a Firebase custom JWT? Privy's pricing page doesn't say (checked 2026-10-16), and the owner hasn't asked yet.
-  - How to ask: create a free Privy app at dashboard.privy.io, then use Integrations › **Request access** to Custom auth, or ask Privy's support.
-  - If it's granted, JWT-based auth takes:
-    - the JWKS URL `https://www.googleapis.com/service_accounts/v1/jwk/securetoken@system.gserviceaccount.com`;
-    - the ID claim `sub`.
-
-    Firebase's tokens carry `iss = https://securetoken.google.com/<projectId>` and `aud = <projectId>`.
-
-- [ ] **Testnet keepsakes in a wallet (debug builds)** (Slice 6)
-  - Wallets don't auto-detect testnet NFTs. Spec §3.8b gives debug builds copy buttons for the contract address and keepsake ID, but there's no "Add to my wallet" sheet with MetaMask's manual "Import NFT" steps, and no board for one.
-  - Options: the copy buttons alone (what §3.8b has now), or a sheet with the steps.
-
 - [ ] **Public profile data for `/u/{handle}`** (Slice 7)
   - The page needs a publicly readable copy of the profile (for example `publicProfiles/{handle}`) with its own security rules, holding only what the "Show my…" switches allow. The read path is settled: one Firestore REST `get` (spec §3.15c).
 
@@ -119,6 +102,18 @@ When an item is settled, record the answer in [decisions.md](decisions.md), fix 
   - "Harbour closed" now covers the Firestore, Auth and Worker daily limits, and a low minter shows "Sealing · delayed". Not yet designed: Firebase Hosting's 360 MB a day running out (the gift and profile pages and `assetlinks.json` go down) and a Shore variant of Harbour closed.
 
 ## Resolved
+
+- [x] **"Create one with Google"** (Slices 5 and 6)
+  - The embedded-wallet option on Add a wallet waited, behind a remote flag, on whether Privy's free plan accepts a Firebase custom JWT.
+  - Answer (2026-10-18, slice 6 planning): remove it. Spec §3.9a loses the option, its flag and "Creating your wallet…". Someone without a wallet keeps their bottles in their chest until they add one. See [decisions.md](decisions.md).
+
+- [x] **When the 24-hour safety check starts** (Slice 6)
+  - The spec and the Claim-Waiting board counted from the cast, while the Keepsake-Detail board assumed the find.
+  - Answer (2026-10-18, slice 6 planning): from the cast, `sealAfter = createdAt + 24h` (spec §1.7). See [decisions.md](decisions.md).
+
+- [x] **Testnet keepsakes in a wallet (debug builds)** (Slice 6)
+  - Wallets don't auto-detect testnet NFTs, and no board drew an "Add to my wallet" sheet with MetaMask's manual "Import NFT" steps.
+  - Answer (2026-10-18, slice 6 planning): the copy buttons for the contract address and keepsake ID alone, as spec §3.8b has them. See [decisions.md](decisions.md).
 
 - [x] **In-app licences** (Slice 4)
   - Material Symbols and Roboto Slab are Apache 2.0, which asks for the licence text to reach people who get the app, and the Roboto Flex and Mono fonts' OFL asks the same.

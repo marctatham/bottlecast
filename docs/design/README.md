@@ -57,12 +57,17 @@ Build the slices in this order. Each one ships on its own. This list replaces sp
   Decided: the Me tab is headed by the pen name; the first cast each day still gives a shield; quiet hours hold every notification, and "found" waits for push; deleting an account leaves bottles others hold or kept in their chests, anonymised; Keep writes at once until slice 6's Claim sheet (`decisions.md`, slice 4 planning). It ships as two PRs: Keep and the Chest, then Me, Settings and reminders, account deletion included (`decisions.md`, choices made while building).
 - [ ] **5. Spikes.** Can a Worker sign within its 10 ms CPU limit? Does Privy's free plan accept a Firebase custom JWT? Get a Reown project ID. Record the answers in `decisions.md`.
   See `wallets.md` §8 and `research/web3.md`.
-  - Answered (`decisions.md`, 2026-10-16): signing fits in 10 ms once warm; on a cold isolate only a warm-up at module scope brings it to the limit, so slice 6 needs more headroom. The spike is in `worker/`. AppKit builds in the app, with a manifest override.
-  - Still to do, both the owner's steps (`open-issues.md`): the Reown project ID, and asking Privy.
-- [ ] **6. Contract, Worker, wallet linking and sealing, on Base Sepolia.** The contract (`contracts/`); the Cloudflare Worker (`/claim`, `/wallet/nonce`, `/wallet/link`, minting one claim per invocation); adding and managing wallets; the Claim sheet; the 24-hour safety check; Sealed. Moving to Base mainnet is a separate release step that the owner approves.
+  - Answered (`decisions.md`, 2026-10-16 and 2026-10-17): signing fits Workers Free, even on a cold isolate, with secp256k1 as WebAssembly, the mint encoded by hand and every hot path warmed up at startup. The spike is in `worker/`. AppKit builds in the app, with a manifest override.
+  - Privy is dropped along with the embedded wallet (`decisions.md`, 2026-10-18). So slice 5 waits only on the owner's Reown project ID (`open-issues.md`).
+- [ ] **6. Contract, Worker, wallet linking and sealing, on Base Sepolia.** The contract (`contracts/`); the Cloudflare Worker (`/wallet/nonce`, `/wallet/link`, `/wallet/unlink`, and a once-a-minute cron that mints one claim per run); adding and managing wallets; the Claim sheet; the 24-hour safety check; Sealed. Moving to Base mainnet is a separate release step that the owner approves.
   Spec §1.6, §1.7, §3.8, §3.9, §3.11. Boards: Foundations-Wallets, Claim-Sheet, Claim-Waiting, Sealed, Wallet-Add-1, Wallet-Add-2, Wallets-Manage, Keepsake-Detail, Keepsake-Testnet, Edge-SealFailed.
-  Decided: the verified mark hashes the uid together with the messageId (`decisions.md`, setup session).
-  Open: whether the 24-hour check counts from the cast (proposed) or from the find. Before mainnet: who funds the minter, Play's Financial features declaration, and the production Auth tier.
+  Decided: the verified mark hashes the uid together with the messageId (`decisions.md`, setup session). The slice's plan (`decisions.md`, 2026-10-18): the 24-hour check counts from the cast; keepsakes keep their metadata on-chain, with a hosted picture; there's no embedded wallet; and only the cron mints.
+  Open, before mainnet: who funds the minter, Play's Financial features declaration, and the production Auth tier.
+  It ships as four PRs into `develop`, in order, each planned in its own session:
+  1. The contract and the decisions (`contracts/`, `docs/design/`), then the deploy to Base Sepolia, with the owner's OK.
+  2. The Worker and the rules (`worker/`, `firebase/`). Each is deployed with the owner's OK, then the cold CPU re-measure runs.
+  3. Wallets in the app (`android/`), with the keepsake pictures on Hosting. Slice 5 is ticked once the Reown project ID is in place.
+  4. Sealing in the app (`android/`). Then slice 6 is ticked.
 - [ ] **7. Gifts, App Links and web pages.** Sending to someone; gift links (30-day expiry, call back) and the Worker's `/share` and `/gift/claim`; keeping from `/b/{token}` with a wallet; the share card and `/u/{handle}`; App Links, with the web side in `web/`.
   Spec §2 (flow 6), §3.13, §3.15. Boards: Gift-Compose, Gift-Link, Web-Gift, Gift-Open, Share-Profile, Web-Profile.
   Open: a server-side text check or an admin queue before any gift is sealed.

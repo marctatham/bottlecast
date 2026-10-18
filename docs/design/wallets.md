@@ -25,7 +25,7 @@ Written for the owner, 2026-10-12. Everything below is free unless the table at 
 - **One address can belong to only one account.** If someone tries to link an address that is already linked elsewhere, the app refuses. It never merges two accounts silently.
 
 ## 3. What users experience ("wallet-last")
-1. **Guests:** the app silently creates a Firebase anonymous "guest" the first time it needs one (the first prefetch or find), not at install, to spare the Auth daily-user cap (§4). Guests can find, read and translate bottles, report, and build a streak. They never see a sign-in screen.
+1. **Guests:** the app silently creates a Firebase anonymous "guest" the first time it needs one (the first prefetch or find), not at install, to spare the Auth daily-user cap (`research/platform.md`, section E). Guests can find, read and translate bottles, report, and build a streak. They never see a sign-in screen.
 2. **Lazy Google sign-in:** the sign-in sheet appears only when someone tries to cast, keep, gift, share their profile or add a wallet.
    - It uses `linkWithCredential` to upgrade the guest, so today's find and streak carry over.
    - The "Sign in anonymously" button goes away.
@@ -42,27 +42,16 @@ Written for the owner, 2026-10-12. Everything below is free unless the table at 
 7. **Gift recipients without the app** can keep a gift on `/b/{token}`: they connect a wallet (Reown AppKit for the web), sign the Worker's SIWE message with `personal_sign`, and the Worker's `/gift/claim` records that wallet as the keeper and mints to it after the safety check. No Firebase account is created.
 
 ## 4. Recommended stack (primary)
+Settled since this guide was written, so see [decisions.md](decisions.md): 2026-10-16 and 2026-10-17 for the Worker on the Free plan, and 2026-10-18 for the rest of slice 6. In short:
+- Firebase Auth and Firestore on Spark;
+- a Cloudflare Worker on the Free plan that links wallets and mints only from a once-a-minute cron;
+- Reown AppKit, only to connect a wallet and ask it to sign;
+- `BottleCastKeepsakes` on Base (Base Sepolia for development), with its metadata on-chain and its picture on Firebase Hosting.
 
-| Piece | Choice | Why / free limits |
-|---|---|---|
-| Sign-in | Firebase Auth: Google via Credential Manager (what you have now), plus silent anonymous guests | Spark with Identity Platform: 3,000 daily active users (Tier 1: email, social, anonymous, custom) and 100 new accounts per hour per IP, not 50K MAU. The docs conflict on whether anonymous users count, so check the project's Auth tier and create guest uids only when needed |
-| Database | Firestore. Collections: `users`, `users/{uid}/wallets`, `walletIndex`, `messages`, `finds`, `claims`, `shares`, `reports`, `users/{uid}/achievements` | Spark: 1 GiB stored, 50K reads/day, 20K writes/day, 20K deletes/day. Going over turns that product off rather than billing you |
-| Server | **Cloudflare Worker (Free)** with endpoints `/claim`, `/wallet/nonce`, `/wallet/link`, `/share`, `/gift/claim`, `/block`, `/mint`, plus a cron trigger for the 24-hour window. It verifies Firebase ID tokens with `jose`, signs with `viem`, and writes Firestore over REST with a service account | 100k requests/day; 10 ms CPU per request (time spent waiting on I/O doesn't count). Signing fits in 10 ms once the isolate is warm; on a cold isolate it takes 25–41 ms, or about 10 ms after a warm-up at module scope (measured in slice 5; see `decisions.md`, 2026-10-16). Avoids Cloud Functions, which needs the Blaze plan and a card |
-| Connect existing wallets | **Reown AppKit Kotlin** (formerly WalletConnect), minSdk 23 (BOM 1.6.17 not confirmed). Use it only to connect and to request `personal_sign`; SIWE is verified in the Worker | Free SDK with a Reown Cloud project ID. Starter plan: $0, 1 project, 2.5M RPC calls a month, 500 MAU for Reown Auth or embedded-wallet users (not used here), cut off at the limit |
-| Chain | **Base mainnet** for release builds, **Base Sepolia** for development; same contract | Sepolia gas is free (CDP faucet: 0.1 ETH per rolling 24h, needs a CDP account). Mainnet: under 1¢ per mint, realistically $0.004–0.006 with ≤280 bytes stored (unverified) |
-| Contract | OpenZeppelin ERC-721 with `MINTER_ROLE`. `mint(to, messageId, text, castAt, penName, writerMark)` is idempotent per messageId. The text (≤280 bytes), cast date, pen name (empty unless the writer signed that bottle at cast time) and the "verified account" mark are stored on-chain, and `tokenURI` returns a base64 JSON plus an SVG drawn from the seed | No IPFS, no pinning service, nothing to break. The repo's `contracts/` (once the sibling repo `bottlecast-nft-contract`) is an untouched Hardhat template, ready for this |
-| Minter key | A Worker secret holding a small ETH float on Base (test ETH on Base Sepolia for dev). Watch its balance; when it runs low, seals show "Sealing delayed". The contract owner key stays offline and separate. Optional alternative: CDP Server Wallet | CDP: 5,000 operations/month free, about 2,500 mints; $0.005 per operation after that |
-| Landing pages and App Links | Firebase Hosting on `bottling-messages.web.app` (the repo's `web/`, once the `bottlecast-web` repo): `/.well-known/assetlinks.json`, `/b/{token}`, `/u/{handle}` | Spark: 10 GB storage, 360 MB/day transfer. Firebase Dynamic Links shut down in August 2025; App Links replace them |
+The free limits are in `research/platform.md` (section E) and `research/web3.md`. The original table is in git history.
 
 ## 5. Fallback: "everyone gets a wallet automatically"
-Use this only if you later want non-crypto users to get keepsakes without installing anything.
-- **Privy Android SDK** (`io.privy:privy-core`) with Firebase custom JWT auth.
-  - It silently creates a wallet at sign-in.
-  - Free for 0–499 monthly active users and 50K signatures/month.
-  - **UNVERIFIED** whether custom JWT auth is included on the free plan. Ask Privy before building.
-- If Privy's free plan doesn't cover custom JWT: **MetaMask Embedded Wallets** is free on devnet only and costs **$69/month** in production. That breaks the zero-budget goal, so the design ships "Create one with Google" behind a "Coming soon" flag.
-- Dynamic, thirdweb and Coinbase CDP Embedded either put custom auth in paid tiers or have no native Android SDK.
-- **Solana alternative** (compressed NFTs via Bubblegum v2 + Mobile Wallet Adapter): not recommended for v1. Wallet support for v2 is incomplete, and you'd need a DAS-capable RPC endpoint.
+Dropped on 2026-10-18 ([decisions.md](decisions.md)). BottleCast has no embedded wallet, so "Create one with Google" and Privy are gone. Someone without a wallet keeps their bottles in their chest until they add one.
 
 ## 6. Social identity on the NFT: what goes on-chain, and what never does
 - **On-chain** (permanent, public):
@@ -99,9 +88,9 @@ Use this only if you later want non-crypto users to get keepsakes without instal
 | Gemini Nano (ML Kit GenAI) | No server cost. Flagship phones only, pre-GA, unpublished quotas | — |
 
 ## 8. Before you build (checklist)
-1. Ask Privy whether custom JWT auth works on the free plan. Until they confirm, keep "Create one with Google" flagged off.
+1. ~~Ask Privy whether custom JWT auth works on the free plan.~~ Dropped with the embedded wallet (decisions.md, 2026-10-18).
 2. Prototype one SIWE verification and one `viem` signing call in a Worker, to check the 10 ms CPU limit. Done in slice 5 (`worker/`); the numbers are in `decisions.md`, 2026-10-16.
-3. Get a Reown Cloud project ID. The Starter limits are known (§4); keep Reown Auth off.
+3. Get a Reown Cloud project ID. The Starter limits are in `research/web3.md`; keep Reown Auth off.
 4. **Play policy:**
    - Declare "earn tokenized digital assets" in the Financial features declaration.
    - Never use earnings language.

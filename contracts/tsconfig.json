@@ -1,11 +1,12 @@
 {
   "compilerOptions": {
-    "target": "es2020",
-    "module": "commonjs",
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
+    "lib": ["es2023"],
+    "module": "node20",
+    "target": "es2023",
     "strict": true,
     "skipLibCheck": true,
-    "resolveJsonModule": true
+    "noEmit": true,
+    "types": ["node"],
+    "verbatimModuleSyntax": true
   }
 }
