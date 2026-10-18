@@ -3,8 +3,8 @@ import {
   Timestamp, collection, doc, getDoc, getDocs, query, setDoc, updateDoc, where,
 } from 'firebase/firestore';
 import {
-  DAY, HOUR, M1, M2, WRITER, admin, commit, google, guest, keepWrites, linkedGuest, reportWrites, seed,
-  seedBottle, seedHold, seedKept, throwBackWrites, utcDate,
+  DAY, HOUR, M1, M2, W1, WRITER, admin, commit, google, guest, keepWrites, linkedGuest, reportWrites, seed,
+  seedBottle, seedHold, seedKept, seedWallet, throwBackWrites, utcDate,
 } from './support.mjs';
 
 describe('keeping a bottle', () => {
@@ -70,13 +70,16 @@ describe('keeping a bottle', () => {
     ['a client keptAt on the bottle', { message: { keptAt: Timestamp.now() } }],
     ['another bottle field', { message: { findCount: 5 } }],
     ['a claim for someone else', { claim: { keeperUid: 'fern' } }],
-    ['a claim already sealing', { claim: { status: 'cooling' } }],
+    ['a claim already sealing', {
+      claim: { status: 'cooling', to: W1, sealAfter: Timestamp.fromMillis(Date.now() - 2 * DAY) },
+    }],
     ['a client keptAt on the claim', { claim: { keptAt: Timestamp.now() } }],
-    ['an extra key on the claim', { claim: { wallet: '0x12' } }],
+    ['a wallet on the claim, which asking to seal adds later', { claim: { to: W1 } }],
     ['another find status', { find: { status: 'thrown_back' } }],
   ]) {
     it(`refuses ${label}`, async () => {
       await seedHold(M1, 'finn', HOUR);
+      await seedWallet('finn', W1);
       await assertFails(commit(google('finn'), keepWrites('finn', M1, writes)));
     });
   }

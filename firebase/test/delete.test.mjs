@@ -77,14 +77,19 @@ describe("deleting an account's records", () => {
     for (const ref of records(google('fern'))) await assertFails(deleteDoc(ref));
   });
 
-  it("lets a keeper delete a claim that isn't sealing", async () => {
-    await seedKept(M1, 'gail', HOUR);
-    await seedKept(M2, 'gail', HOUR);
-    await seed((db) => updateDoc(doc(db, 'claims', M2), { status: 'cooling' }));
-    await seedDeletion('gail');
-    await assertSucceeds(deleteDoc(doc(google('gail'), 'claims', M1)));
-    await assertFails(deleteDoc(doc(google('gail'), 'claims', M2)));
-  });
+  for (const [status, deletable] of [
+    ['pending_wallet', true], ['failed', true], ['minted', true], ['cooling', false], ['minting', false],
+  ]) {
+    it(`${deletable ? 'lets' : 'refuses'} a keeper delete a ${status} claim${deletable ? '' : ', which the Worker finishes'}`, async () => {
+      await seedKept(M1, 'gail', HOUR);
+      await seed((db) => updateDoc(doc(db, 'claims', M1), { status }));
+      const ref = doc(google('gail'), 'claims', M1);
+      await assertFails(deleteDoc(ref));
+      await seedDeletion('gail');
+      if (deletable) await assertSucceeds(deleteDoc(ref));
+      else await assertFails(deleteDoc(ref));
+    });
+  }
 });
 
 describe("deleting a writer's bottles", () => {

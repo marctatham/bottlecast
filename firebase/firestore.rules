@@ -3,7 +3,9 @@ rules_version = '2';
 // BottleCast's Cloud Firestore security rules.
 //
 // Collections: messages, finds, daily, reports, handoffs, castTally, claims, streakDays, deletions,
-// users and users/{uid}/blockedWriters. Anything else is denied, because rules deny by default. Tests:
+// users, users/{uid}/blockedWriters, and users/{uid}/wallets and walletIndex, which only the Worker
+// writes. Anything else is denied, because rules deny by default: minter, the Worker's own state, is
+// one of those. The Worker signs in as a service account, which these rules don't apply to. Tests:
 // firebase/test, run with `npm run test:emulator`.
 //
 // The report threshold (3) also lives in the app's sea queries (reportCount in [0, 1, 2]), the Terms
@@ -93,6 +95,10 @@ service cloud.firestore {
 
     function deletionDoc(uid) {
       return /databases/$(database)/documents/deletions/$(uid);
+    }
+
+    function walletDoc(uid, address) {
+      return /databases/$(database)/documents/users/$(uid)/wallets/$(address);
     }
 
     // My account is being deleted (spec §3.17): it can't find or cast any more, and may delete the
@@ -231,7 +237,8 @@ service cloud.firestore {
         && getAfter(claimDoc(messageId)).data.keeperUid == me();
     }
 
-    // A bottle someone kept carries keptAt for good, so the rules know without reading its claim.
+    // A bottle someone kept carries keptAt for good, so the rules know without reading its claim. A
+    // sealed one also carries sealedAt, which only the Worker writes: no rule here lets a client set it.
     function wasKept(m) {
       return m.get('keptAt', null) != null;
     }
@@ -502,8 +509,7 @@ service cloud.firestore {
 
     // ---------- claims/{messageId} ----------
 
-    // Kept (spec §1.7): my claim on a bottle, made in the keep's commit. Sealing (slice 6) moves it on
-    // from pending_wallet; until then nothing changes it.
+    // Kept (spec §1.7): my claim on a bottle, made in the keep's commit, which leaves it pending_wallet.
     function isValidClaim(messageId) {
       let c = incoming();
       return hasGoogle()
@@ -516,12 +522,39 @@ service cloud.firestore {
         && getAfter(messageDoc(messageId)).data.keptAt == request.time;
     }
 
+    // Asking to seal (spec §1.7, decided 2026-10-18): I move my claim from pending_wallet, or from
+    // failed to try again, to cooling. It names one of my linked wallets and the end of the 24-hour
+    // safety check, counted from the cast, and drops a failed seal's error. The bottle must still be
+    // kept and sealable, and still have its writer: once a writer has deleted their account, nobody
+    // can ask to seal their bottles. Every later status is the Worker's.
+    function isAskToSeal(messageId) {
+      let before = existing();
+      let after = incoming();
+      return hasGoogle()
+        && before.keeperUid == me()
+        && before.status in ['pending_wallet', 'failed']
+        && changedKeys().hasOnly(['status', 'sealAfter', 'to', 'error'])
+        && after.status == 'cooling'
+        && !('error' in after)
+        && after.to is string && after.to.matches('^0x[0-9a-f]{40}$')
+        && after.sealAfter is timestamp
+        && after.sealAfter == get(messageDoc(messageId)).data.createdAt + duration.value(24, 'h')
+        && get(messageDoc(messageId)).data.status == 'kept'
+        && get(messageDoc(messageId)).data.sealable == true
+        && get(messageDoc(messageId)).data.userId != null
+        && exists(walletDoc(me(), after.to))
+        && !isDeleting();
+    }
+
     match /claims/{messageId} {
       allow get: if isAdmin() || (signedIn() && resource.data.keeperUid == me());
       allow list: if isAdmin() || (signedIn() && resource.data.keeperUid == me());
       allow create: if signedIn() && isValidClaim(messageId);
-      // Only as the keeper's account is deleted; a seal under way (slice 6) finishes.
-      allow delete: if signedIn() && resource.data.keeperUid == me() && resource.data.status == 'pending_wallet'
+      allow update: if signedIn() && isAskToSeal(messageId);
+      // Only as the keeper's account is deleted, and only a claim that isn't sealing: one that's
+      // cooling or minting finishes, and the Worker deletes it then.
+      allow delete: if signedIn() && resource.data.keeperUid == me()
+        && resource.data.status in ['pending_wallet', 'failed', 'minted']
         && isDeleting();
     }
 
@@ -617,6 +650,22 @@ service cloud.firestore {
         && hasExactly(['at', 'messageId'])
         && incoming().at == request.time
         && incoming().messageId is string;
+    }
+
+    // ---------- users/{uid}/wallets/{address} and walletIndex/{address} ----------
+
+    // A wallet linked to my account (spec §1.7, §3.9), keyed by its lowercase address, and the index
+    // that maps an address to the one account holding it. Only the Worker writes either, once the
+    // wallet has signed (/wallet/link). I may read mine, and delete them as my account is deleted.
+    match /users/{userId}/wallets/{address} {
+      allow read: if signedIn() && me() == userId;
+      allow delete: if signedIn() && me() == userId && isDeleting();
+    }
+
+    match /walletIndex/{address} {
+      allow get, list: if signedIn() && resource.data.uid == me();
+      // An entry that's already gone counts too, so a deletion that stopped part-way carries on.
+      allow delete: if signedIn() && (resource == null || resource.data.uid == me()) && isDeleting();
     }
   }
 }
