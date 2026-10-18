@@ -1,71 +1,51 @@
-// Drives the spike Worker. The CPU numbers come from `wrangler tail`, not from
-// here: a Worker's clock stands still while it computes, so it can't time itself.
-//   SPIKE_URL=https://bottlecast-spike.<subdomain>.workers.dev node bench/run.ts warm [requests]
-//   SPIKE_URL=… node bench/run.ts cold <label> [first]  one /bench/mint and one /bench/link, `first` going first,
-//                                                     or any other route (`satoken`, `sign`…) alone
-//   SPIKE_URL=… node bench/run.ts rpc                   the reads a mint makes, through viem and as one batch
-// Tail samples busy Workers, so SPIKE_GAP_MS spaces warm requests out to keep more events.
-import { readFileSync } from "node:fs";
-import { idToken, siweBody, type SpikeKeys } from "./fixtures.ts";
+// Drives the deployed Worker's wallet routes for the CPU measurements in README.md. The CPU figures
+// come from Workers Logs or `wrangler tail`, not from here: a Worker's clock stands still while it
+// computes. It needs a Firebase ID token with a Google identity for the Worker's project.
+//   WORKER_URL=https://bottlecast-debug.<subdomain>.workers.dev ID_TOKEN=… node bench/run.ts cold <label>
+//   WORKER_URL=… ID_TOKEN=… node bench/run.ts warm [rounds]
+// Each round links a throwaway wallet (/wallet/nonce, then /wallet/link) and unlinks it again, so the
+// account ends as it started. `?run=` labels each request for the logs. GAP_MS spaces warm rounds.
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
 
-const base = process.env.SPIKE_URL ?? "http://localhost:8787";
-const gapMs = Number(process.env.SPIKE_GAP_MS ?? 0);
-const [mode = "warm", arg] = process.argv.slice(2);
-const driver = JSON.parse(readFileSync(".bench-keys.json", "utf8")) as SpikeKeys["driver"];
+const base = process.env.WORKER_URL;
+const token = process.env.ID_TOKEN;
+if (!base || !token) {
+  console.error("Set WORKER_URL and ID_TOKEN (never commit or paste the token)");
+  process.exit(1);
+}
+const gapMs = Number(process.env.GAP_MS ?? 0);
+const [mode = "cold", arg] = process.argv.slice(2);
 
-const token = await idToken(driver.idPrivateJwk);
-const siwe = await siweBody(driver.walletKey);
-const bodies: Record<string, object | undefined> = {
-  noop: undefined,
-  hmac: undefined,
-  satoken: undefined,
-  sign: undefined,
-  idtoken: { idToken: token },
-  siwe,
-  mint: { idToken: token },
-  link: { idToken: token, ...siwe },
-};
-
-async function call(route: string, run: string): Promise<{ status: number; text: string }> {
-  const body = bodies[route];
-  const response = await fetch(`${base}/bench/${route}?run=${run}`, {
-    method: body ? "POST" : "GET",
-    headers: { "X-Spike-Key": driver.spikeKey, "Content-Type": "application/json" },
-    body: body ? JSON.stringify(body) : undefined,
+async function call(route: string, run: string, body: object): Promise<{ status: number; body: Record<string, unknown> }> {
+  const response = await fetch(`${base}${route}?run=${run}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
-  return { status: response.status, text: await response.text() };
+  return { status: response.status, body: (await response.json()) as Record<string, unknown> };
 }
 
-if (mode === "warm") {
-  const requests = Number(arg ?? 200);
-  for (const route of Object.keys(bodies)) {
-    const statuses = new Map<number, number>();
-    let sample = "";
-    for (let i = 0; i < requests; i++) {
-      if (gapMs) await new Promise((resolve) => setTimeout(resolve, gapMs));
-      const { status, text } = await call(route, "warm");
-      statuses.set(status, (statuses.get(status) ?? 0) + 1);
-      if (status !== 200 || !sample) sample = text.slice(0, 120);
-    }
-    console.log(`${route.padEnd(8)} ${[...statuses].map(([s, n]) => `${s}×${n}`).join(" ")}  ${sample}`);
-  }
-} else if (mode === "cold") {
-  const first = process.argv[4] ?? "mint";
-  const sequence = first === "mint" ? ["mint", "link"] : first === "link" ? ["link", "mint"] : [first];
-  if (!Object.hasOwn(bodies, first)) {
-    console.error(`Cold runs start with one of ${Object.keys(bodies).join(", ")}, not ${first}`);
-    process.exit(1);
-  }
-  for (const route of sequence) {
-    const { status, text } = await call(route, `cold-${arg ?? "0"}`);
-    console.log(`${route.padEnd(8)} ${status}  ${text.slice(0, 120)}`);
-  }
-} else if (mode === "rpc") {
-  for (const route of ["rpc", "rpc-lean"]) {
-    const { status, text } = await call(route, "rpc");
-    console.log(`${route.padEnd(8)} ${status}  ${text}`);
+/** One link and unlink of a fresh throwaway wallet; returns each route's status. */
+async function round(run: string): Promise<string> {
+  const wallet = privateKeyToAccount(generatePrivateKey());
+  const nonce = await call("/wallet/nonce", run, { address: wallet.address });
+  if (nonce.status !== 200) return `nonce ${nonce.status} ${JSON.stringify(nonce.body)}`;
+  const message = nonce.body.message as string;
+  const link = await call("/wallet/link", run, { message, signature: await wallet.signMessage({ message }) });
+  const unlink = await call("/wallet/unlink", run, { address: wallet.address });
+  return `nonce ${nonce.status}, link ${link.status} ${link.status === 200 ? "" : JSON.stringify(link.body)}, unlink ${unlink.status}`;
+}
+
+if (mode === "cold") {
+  // After a redeploy (README.md), so the first request lands on a fresh isolate.
+  console.log(await round(`cold-${arg ?? "0"}`));
+} else if (mode === "warm") {
+  const rounds = Number(arg ?? 20);
+  for (let i = 0; i < rounds; i++) {
+    if (gapMs) await new Promise((resolve) => setTimeout(resolve, gapMs));
+    console.log(await round("warm"));
   }
 } else {
-  console.error(`Unknown mode ${mode}: use warm, cold or rpc`);
+  console.error(`Unknown mode ${mode}: use cold or warm`);
   process.exit(1);
 }

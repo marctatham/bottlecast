@@ -2,28 +2,31 @@
   "name": "bottlecast-worker",
   "private": true,
   "type": "module",
-  "description": "BottleCast's Cloudflare Worker. For now it holds slice 5's spike: bench routes that measure the CPU signing and token checks use",
+  "description": "BottleCast's Cloudflare Worker: wallet linking, and the cron that seals kept bottles as keepsakes",
   "engines": {
     "node": ">=22.18.0"
   },
   "scripts": {
     "types": "wrangler types",
-    "check": "wrangler types && tsc --noEmit && tsc --noEmit -p bench",
+    "check": "wrangler types && tsc --noEmit && tsc --noEmit -p tsconfig.node.json",
+    "test": "vitest run",
+    "e2e": "node e2e/run.ts",
     "keys": "node bench/keys.ts",
     "bench:local": "node bench/local.ts",
     "bench": "node bench/run.ts",
     "summarise": "node bench/summarise.ts"
   },
   "dependencies": {
-    "@noble/curves": "1.9.1",
     "@noble/hashes": "1.8.0",
-    "jose": "6.2.12",
-    "tiny-secp256k1": "2.2.4",
-    "viem": "2.57.4"
+    "tiny-secp256k1": "2.2.4"
   },
   "devDependencies": {
+    "@noble/curves": "1.9.1",
     "@types/node": "24.19.1",
+    "jose": "6.2.12",
     "typescript": "6.0.3",
+    "viem": "2.57.4",
+    "vitest": "5.0.3",
     "wrangler": "4.151.0"
   }
 }

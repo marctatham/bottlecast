@@ -1,14 +1,33 @@
-// Slice 5's spike Worker. It's deployed only while measuring, then deleted
-// (README.md). No account_id: wrangler uses the one account it's logged in
-// to, and the public repo never holds the ID.
+// BottleCast's Worker for debug builds: the debug Firebase project and Base Sepolia (decisions.md,
+// 2026-10-18). Mainnet will be an environment of its own. There's no account_id and no KV id, so the
+// public repo holds neither: wrangler uses the one account it's logged in to, and created the KV
+// namespace on the first deploy, which keeps it linked without the id (revert the id that deploy
+// writes back here). Secrets are set with `wrangler secret`, never here (README.md).
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "bottlecast-spike",
-  "main": "src/spike.ts",
+  "name": "bottlecast-debug",
+  "main": "src/index.ts",
   "compatibility_date": "2026-10-01",
   "workers_dev": true,
   "preview_urls": false,
   "observability": {
     "enabled": true
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  },
+  "kv_namespaces": [
+    {
+      "binding": "CACHE"
+    }
+  ],
+  "vars": {
+    "CHAIN_ID": "84532",
+    "RPC_URL": "https://sepolia.base.org",
+    // Empty until the contract is deployed (contracts/README.md); the cron idles until then.
+    "CONTRACT_ADDRESS": "",
+    "SIWE_DOMAIN": "bottling-messages.web.app",
+    "SIWE_URI": "https://bottling-messages.web.app",
+    "RECEIPT_WAIT_MS": "10000"
   }
 }

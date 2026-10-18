@@ -2,8 +2,8 @@
 // WebAssembly by tiny-secp256k1 (MIT, bitcoinjs). noble's JavaScript pays
 // 20–40 ms on a fresh isolate before V8 has optimised its BigInt maths. This
 // pays far less, but not nothing: deployed, a first call cost about 4–5 ms more
-// than later ones, probably V8 compiling each function on first use, so a
-// Worker should make that call at module scope (src/spike-wasm.ts).
+// than later ones, probably V8 compiling each function on first use, so the
+// Worker makes that call at module scope (src/warm-up.ts).
 //
 // The package's own loaders don't fit a Worker: one reads the file with `fs`,
 // the other relies on a bundler's ESM-integration import, and Workers refuses
@@ -20,6 +20,8 @@ export interface Secp256k1Wasm {
   signRecoverable(hash: Uint8Array, privateKey: Uint8Array): { signature: Uint8Array; recoveryId: number };
   /** The uncompressed public key (65 bytes) that made the signature, or null if none did. */
   recover(hash: Uint8Array, signature: Uint8Array, recoveryId: number): Uint8Array | null;
+  /** The uncompressed public key (65 bytes) of a private key, without signing anything. */
+  publicKey(privateKey: Uint8Array): Uint8Array;
 }
 
 interface Exports {
@@ -30,6 +32,7 @@ interface Exports {
   SIGNATURE_INPUT: WebAssembly.Global;
   signRecoverable(withExtraData: 0 | 1): number;
   recover(outputLength: number, recoveryId: number): number;
+  pointFromScalar(outputLength: number): number;
 }
 
 const PRIVATE_KEY_SIZE = 32;
@@ -115,6 +118,19 @@ export function instantiateSecp256k1(module: WebAssembly.Module, blindingSeed?: 
       } finally {
         hashInput.fill(0);
         signatureInput.fill(0);
+        publicKeyInput.fill(0);
+      }
+    },
+
+    publicKey(privateKey) {
+      expectLength(privateKey, PRIVATE_KEY_SIZE, "private key");
+      if (!inScalarRange(privateKey)) throw new TypeError("The private key is out of range");
+      try {
+        privateKeyInput.set(privateKey);
+        if (wasm.pointFromScalar(PUBLIC_KEY_SIZE) !== 1) throw new TypeError("secp256k1 refused the private key");
+        return publicKeyInput.slice();
+      } finally {
+        privateKeyInput.fill(0);
         publicKeyInput.fill(0);
       }
     },
