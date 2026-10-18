@@ -61,11 +61,15 @@ contract BottleCastKeepsakes is ERC721, AccessControl, IERC4906 {
     error TextTooLong(uint256 bytesLength);
     error PenNameTooLong(uint256 utf16Units);
     error UnknownGlass(uint8 glass);
+    error ZeroAdmin();
+    error ImageBaseWithoutSlash(string imageBase);
 
+    /// @dev A zero admin would leave nobody able to revoke a minter or move the pictures, ever.
     constructor(address admin, address minter, string memory imageBase_) ERC721("BottleCast keepsakes", "BOTTLE") {
+        if (admin == address(0)) revert ZeroAdmin();
         _grantRole(DEFAULT_ADMIN_ROLE, admin);
         _grantRole(MINTER_ROLE, minter);
-        imageBase = imageBase_;
+        _setImageBase(imageBase_);
     }
 
     /**
@@ -168,7 +172,7 @@ contract BottleCastKeepsakes is ERC721, AccessControl, IERC4906 {
      * own (ERC-7572).
      */
     function setImageBase(string calldata imageBase_) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        imageBase = imageBase_;
+        _setImageBase(imageBase_);
         emit BatchMetadataUpdate(1, type(uint256).max);
         emit ContractURIUpdated();
     }
@@ -180,6 +184,13 @@ contract BottleCastKeepsakes is ERC721, AccessControl, IERC4906 {
         returns (bool)
     {
         return interfaceId == ERC4906_INTERFACE_ID || super.supportsInterface(interfaceId);
+    }
+
+    /// @dev The file name is appended as is, so a base must end in "/", or every picture's address breaks at once.
+    function _setImageBase(string memory imageBase_) private {
+        bytes memory base = bytes(imageBase_);
+        if (base.length == 0 || base[base.length - 1] != "/") revert ImageBaseWithoutSlash(imageBase_);
+        imageBase = imageBase_;
     }
 
     function _picture(string memory shapeFile, string memory glassFile) private view returns (string memory) {

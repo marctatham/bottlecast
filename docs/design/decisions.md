@@ -443,7 +443,7 @@ As on 2026-10-17, only free tiers that halt rather than bill.
   - The keepsake's metadata is JSON that the contract builds itself: the words, the cast date, the pen name, the verified mark, the shape and the glass. Only its `image` is a URL.
   - There's one picture per shape and glass, drawn from the app's bottle rig with the wax seal. Every bottle is sea glass for now (`BottleLook.kt`), so 3 of the 9 pictures are in use.
   - The ±6° hue jitter stays in the app.
-- **The pictures live on Firebase Hosting,** at `https://bottling-messages.web.app/keepsakes/`, from `web/public/keepsakes/` on the production project. Hosting on Spark serves 10 GB a month free and goes offline rather than billing. The contract's admin can move the pictures, to a domain of BottleCast's own, say, and the contract then tells marketplaces to fetch them again (ERC-4906).
+- **The pictures live on Firebase Hosting,** at `https://bottling-messages.web.app/keepsakes/`, from `web/public/keepsakes/` on the production project. Hosting on Spark is free up to 360 MB of transfer a day (shared with the legal and, later, the gift pages), and goes offline rather than billing. The contract's admin can move the pictures, to a domain of BottleCast's own, say, and the contract then tells marketplaces to fetch them again (ERC-4906).
 - **No embedded wallet, so Privy is dropped.** "Create one with Google", its remote flag and "Creating your wallet…" leave the spec (§3.9a). Someone without a wallet keeps their bottles in their chest until they add one. Resolves the open issue "Create one with Google". Slice 5 now waits only on the Reown project ID.
 - **The 24-hour safety check counts from the cast:** `sealAfter = createdAt + 24h` (spec §1.7). Resolves "When the 24-hour safety check starts".
 - **Minting runs only in the Worker's cron:** once a minute, one claim per run, under a Firestore lease.
@@ -490,7 +490,7 @@ Choices made while building the contract, which the owner can revisit at review:
   - a pen name of at most 20 UTF-16 units, where an emoji counts as 2, as in the app and the rules;
   - a glass from 0 to 2.
 
-  It also refuses an empty messageId. The pen-name count steps from lead byte to lead byte, so even malformed UTF-8 can't store more than 60 bytes.
+  It also refuses an empty messageId, a zero admin, and a picture base that doesn't end in "/". The pen-name count steps from lead byte to lead byte, so even malformed UTF-8 can't store more than 60 bytes.
 - **The collection's metadata** (`contractURI`, ERC-7572):
   - "Messages found in bottles on BottleCast and sealed by their finders. Keepsakes are mementos, not money.";
   - the classic sea-glass picture;

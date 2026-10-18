@@ -25,12 +25,12 @@ It's a Hardhat 3 project with viem, and its tests run on node:test.
   - `keepsake(id)` returns the stored record;
   - `imageBase()`;
   - `contractURI()` returns the collection's metadata (ERC-7572).
-- **`setImageBase(base)`:** admin only. It emits ERC-4906's `BatchMetadataUpdate(1, type(uint256).max)` and ERC-7572's `ContractURIUpdated()`, so marketplaces fetch the pictures again.
+- **`setImageBase(base)`:** admin only. The base must end in `/`, since the file name is appended as is. It emits ERC-4906's `BatchMetadataUpdate(1, type(uint256).max)` and ERC-7572's `ContractURIUpdated()`, so marketplaces fetch the pictures again.
 - **Roles:**
   - `DEFAULT_ADMIN_ROLE` grants roles and moves the pictures;
   - `MINTER_ROLE` is the Worker's minter.
 
-  Neither can move anyone's keepsake.
+  Neither can move anyone's keepsake. The constructor refuses a zero admin, who could never be replaced.
 
 **The pictures** are nine PNGs, one per shape and glass, at `https://bottling-messages.web.app/keepsakes/`. They're drawn from the app's bottle rig into `web/public/keepsakes/` in slice 6's third PR. Every bottle is sea glass for now, so three of them are in use.
 

@@ -51,7 +51,10 @@ const DEFAULT_ADMIN_ROLE = zeroHash;
 function decodeJson<T>(uri: string): T {
   const prefix = "data:application/json;base64,";
   assert.ok(uri.startsWith(prefix), uri.slice(0, 40));
-  const bytes = Buffer.from(uri.slice(prefix.length), "base64");
+  const payload = uri.slice(prefix.length);
+  const bytes = Buffer.from(payload, "base64");
+  // Buffer skips characters that aren't base64, so check it round-trips, as stricter decoders need.
+  assert.equal(bytes.toString("base64"), payload);
   return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as T;
 }
 
@@ -446,6 +449,24 @@ describe("BottleCastKeepsakes", async () => {
       );
     });
 
+    it("needs a base that ends in a slash", async () => {
+      const keepsakes = await networkHelpers.loadFixture(deployKeepsakes);
+
+      for (const base of ["https://keepsakes.example.org/art", ""]) {
+        await viem.assertions.revertWithCustomErrorWithArgs(
+          keepsakes.write.setImageBase([base]),
+          keepsakes,
+          "ImageBaseWithoutSlash",
+          [base],
+        );
+      }
+      await viem.assertions.revertWithCustomError(
+        viem.deployContract("BottleCastKeepsakes", [admin.account.address, minter.account.address, "https://x.org"]),
+        keepsakes,
+        "ImageBaseWithoutSlash",
+      );
+    });
+
     it("doesn't let anyone else move them", async () => {
       const keepsakes = await networkHelpers.loadFixture(deployKeepsakes);
 
@@ -533,6 +554,18 @@ describe("BottleCastKeepsakes", async () => {
         keepsakes,
         "ERC721NonexistentToken",
         [2n],
+      );
+    });
+  });
+
+  describe("deploying", () => {
+    it("refuses a zero admin, who could never be replaced", async () => {
+      const keepsakes = await networkHelpers.loadFixture(deployKeepsakes);
+
+      await viem.assertions.revertWithCustomError(
+        viem.deployContract("BottleCastKeepsakes", [zeroAddress, minter.account.address, DEFAULT_IMAGE_BASE]),
+        keepsakes,
+        "ZeroAdmin",
       );
     });
   });
