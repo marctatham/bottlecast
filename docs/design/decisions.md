@@ -426,3 +426,76 @@ Owner's raw answers (2026-10-17): the minter "WebAssembly signer, self-held", ov
 - **Measuring:** the network used blocked `wrangler tail`'s host, so the figures came from Workers Logs, read in the dashboard (`worker/README.md`). Workers Logs missed 10–20% of events, so a few cold samples per variant are missing.
 
   *Changes spec: nothing.*
+
+## 2026-10-18 — Slice 6 planning
+
+The owner's answers while planning slice 6 (contract, Worker, wallet linking and sealing, on Base Sepolia), and the plan they approved with them. The slice's first PR, the contract, records them all.
+
+Owner's raw answers (2026-10-18):
+- the keepsake's picture: "Hosted art per bottle";
+- where it's hosted: "bottling-messages.web.app";
+- "Create one with Google": "Remove it";
+- the 24-hour safety check: "From the cast".
+
+As on 2026-10-17, only free tiers that halt rather than bill.
+
+- **The picture is hosted, and everything else stays on-chain.**
+  - The keepsake's metadata is JSON that the contract builds itself: the words, the cast date, the pen name, the verified mark, the shape and the glass. Only its `image` is a URL.
+  - There's one picture per shape and glass, drawn from the app's bottle rig with the wax seal. Every bottle is sea glass for now (`BottleLook.kt`), so 3 of the 9 pictures are in use.
+  - The ±6° hue jitter stays in the app.
+- **The pictures live on Firebase Hosting,** at `https://bottling-messages.web.app/keepsakes/`, from `web/public/keepsakes/` on the production project. Hosting on Spark serves 10 GB a month free and goes offline rather than billing. The contract's admin can move the pictures, to a domain of BottleCast's own, say, and the contract then tells marketplaces to fetch them again (ERC-4906).
+- **No embedded wallet, so Privy is dropped.** "Create one with Google", its remote flag and "Creating your wallet…" leave the spec (§3.9a). Someone without a wallet keeps their bottles in their chest until they add one. Resolves the open issue "Create one with Google". Slice 5 now waits only on the Reown project ID.
+- **The 24-hour safety check counts from the cast:** `sealAfter = createdAt + 24h` (spec §1.7). Resolves "When the 24-hour safety check starts".
+- **Minting runs only in the Worker's cron:** once a minute, one claim per run, under a Firestore lease.
+  - So there's one minter whose nonce never races, with no Durable Object. That settles the nonce part of "Worker within the free limits".
+  - A single seal starts within about a minute, and a batch of 3 takes about 3 minutes.
+- **Keep stays the app's own transaction, checked by the rules** (slice 4).
+  - Asking to seal is a second rules-checked update to the claim: `pending_wallet` (or `failed`) becomes `cooling`, with `sealAfter` and `to`, one of the keeper's linked wallets.
+  - Every later status is the Worker's. The Worker has no `/claim`. Its routes are `/wallet/nonce`, `/wallet/link`, `/wallet/unlink` and the cron.
+- **Wallets:**
+  - Each wallet is stored at `users/{uid}/wallets/{address}`, keyed by the lowercase address. The Worker keeps a `receiving` flag on exactly one.
+  - `walletIndex/{address}` maps an address to its uid.
+  - Only the Worker writes either.
+  - The Firebase project implies the chain, so the ids drop the `chain:` prefix that `wallets.md` used.
+  - Nothing goes on `users/{uid}`, whose keys the rules pin.
+- **Deleted accounts:**
+  - **The writer:** once a writer deletes their account, nobody can ask to seal their kept bottles. Seals asked for before then still finish, as decided on 2026-10-15. The writer's uid is gone by then, so those keepsakes' verified mark is an HMAC over a fixed stand-in and the messageId. It still links nothing, and casting needed a Google account, so "Bottled by a verified account" stays true.
+  - **The keeper:** a seal the keeper asked for before deleting their account still finishes, to the `to` recorded on the claim.
+- **Release builds keep sealing and wallets off until the mainnet step,** behind a BuildConfig flag. Until then AppKit is a debug-only dependency, so release bundles don't carry its 132 libraries.
+- **`contracts/` moves to Hardhat 3 with viem,** with its versions pinned exactly, as in `worker/` and `firebase/`.
+- **The slice's other open items take their proposed defaults:**
+  - The spec's three-step wallet sheet wins over the Wallet-Add boards. Resolves "Board or spec where they differ" for slice 6.
+  - Testnet keepsakes in a wallet get only the copy buttons that §3.8b already has, and no "Import NFT" sheet. Resolves "Testnet keepsakes in a wallet".
+
+  *Changes spec: §0 (G9), §1.6 (the keepsake's picture), §1.7 (the claim's statuses and fields, and the wallet ids), §3.9a (no "Create one with Google").*
+
+The slice ships as four PRs into `develop`, in order, each planned in its own session:
+1. **The contract and these decisions** (`contracts/`, `docs/design/`), then the deploy to Base Sepolia, with the owner's OK.
+2. **The Worker and the rules** (`worker/`, `firebase/`):
+   - the Worker, with its cron, KV and secrets;
+   - the rules and indexes on the debug project, after a dry run.
+
+   Each is deployed with the owner's OK. The cold CPU re-measure follows.
+3. **Wallets in the app** (`android/`): the config, the Worker client, AppKit, Add a wallet, Wallets, and the Me and Settings rows.
+   - The keepsake pictures go to Hosting, through a preview channel first.
+   - Slice 5 is ticked once the Reown project ID is in place.
+4. **Sealing in the app** (`android/`): the Claim sheet, the progress screen, Keepsake detail, the Chest, the notification and deletion. Then slice 6 is ticked.
+
+Choices made while building the contract, which the owner can revisit at review:
+
+- **Name and symbol:** "BottleCast keepsakes", `BOTTLE`. Token ids count up from 1, and each keepsake is named "BottleCast #N".
+- **Cast** is the metadata standard's date trait (`"display_type": "date"`, in seconds), so marketplaces show it in the viewer's own time zone.
+- **The limits are the app's own:**
+  - a message of at most 280 UTF-8 bytes;
+  - a pen name of at most 20 UTF-16 units, where an emoji counts as 2, as in the app and the rules;
+  - a glass from 0 to 2.
+
+  It also refuses an empty messageId. The pen-name count steps from lead byte to lead byte, so even malformed UTF-8 can't store more than 60 bytes.
+- **The collection's metadata** (`contractURI`, ERC-7572):
+  - "Messages found in bottles on BottleCast and sealed by their finders. Keepsakes are mementos, not money.";
+  - the classic sea-glass picture;
+  - a link to the Play listing.
+
+  It claims no permanence, since the same contract runs on Base Sepolia. Moving the pictures also emits ERC-7572's `ContractURIUpdated()`.
+- **The compiler targets Cancun,** which Base and Polygon PoS both run, rather than solc's default.
+- **The contract grants no licence** (`UNLICENSED`), since the repo has none.
