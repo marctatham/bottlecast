@@ -499,3 +499,21 @@ Choices made while building the contract, which the owner can revisit at review:
   It claims no permanence, since the same contract runs on Base Sepolia. Moving the pictures also emits ERC-7572's `ContractURIUpdated()`.
 - **The compiler targets Cancun,** which Base and Polygon PoS both run, rather than solc's default.
 - **The contract grants no licence** (`UNLICENSED`), since the repo has none.
+
+Choices made while building the Worker and the rules (the slice's second PR), which the owner can revisit at review. The plan approved the first six:
+
+- **Claims on account deletion:** a deleting account may now delete its `failed` and `minted` claims as well as `pending_wallet` ones. The keepsake stays on-chain, and the claim only tied the account to a wallet. Claims `cooling` or `minting` finish, and the Worker deletes each one as its seal ends for a keeper with a tombstone. The fourth PR's eraser follows, and finds its index entries with `walletIndex where uid == me`.
+- **The wallet's name:** the app sends the wallet app's name ("Rainbow") when it links one, and the Worker keeps it on the wallet for the Wallets screen.
+- **A bottle under review** pushes its claim's `sealAfter` an hour on, so it doesn't hold up the queue. One removed fails with `removed`.
+- **A mint already sent is final:** a bottle removed while its mint is in flight still seals, unless the mint is stuck long enough to be replaced (5 minutes behind the network's fees), when the replacement cancels it.
+- **The deleted writer's stand-in** in the verified mark is `(deleted)`, which no Firebase uid can equal.
+- **The Worker is named `bottlecast-debug`;** mainnet gets an environment of its own.
+- **Only the minter's balance or role delays the queue.** Too little ETH (gas, fees and Base's L1 fee) or a revoked `MINTER_ROLE` sets `delayedSince` on the oldest due claim and holds the rest behind it, about 6 Firestore reads a minute while it lasts. Any other refusal fails just that claim, with a code (`worker/README.md`).
+- **The Worker carries no viem or jose.** The ID token, SIWE, Firestore and JSON-RPC are written by hand on WebCrypto, so a cold isolate interprets no general-purpose library. Its bundle fell from 1,943 KiB to 1,313 KiB.
+- **ID tokens** need a Google identity, as the rules' `hasGoogle()` does, and a uid of letters and digits. Google's keys are cached in KV for as long as Google's Cache-Control allows.
+- **`/wallet/nonce` never says whether an address is linked elsewhere,** so nobody can use it to look up which addresses use BottleCast. "This wallet belongs to another BottleCast account" shows only after the wallet has signed.
+- **A smart wallet** is checked with one batched request: its code, and ERC-6492's validator. The validator's yes counts only for a wallet with code, or a signature with the 6492 suffix, since it falls back to `ecrecover`, which a forged signature can steer to the zero address. A smart wallet signs for one chain, so the third PR makes `CHAIN_ID` the wallet's active chain before asking it to sign.
+- **An address held by an account being deleted** can be linked by another account, which takes it over.
+- **Nonces** come from the higher of the chain's mined count and the one after the last mint the Worker recorded, so a lagging node behind the public endpoint can't hand out a used one.
+
+  *Changes spec: nothing; §1.7 already names these fields and statuses.*

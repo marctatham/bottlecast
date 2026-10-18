@@ -58,7 +58,7 @@ Each deploy needs the owner's OK (`CLAUDE.md`). The deployer's key lives in Hard
    ```
    On Sepolia the deployer is a throwaway key, and it becomes the admin.
 2. Fund the deployer from a Base Sepolia faucet.
-3. Write `ignition/parameters/baseSepolia.json`, naming the Worker's minter address:
+3. Write `ignition/parameters/baseSepolia.json`, naming the Worker's minter address, which `worker/scripts/new-secrets.ts` printed when it made the minter key (`worker/README.md`):
    ```json
    { "BottleCastKeepsakes": { "minter": "0x…" } }
    ```
