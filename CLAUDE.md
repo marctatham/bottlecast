@@ -13,7 +13,7 @@ The design source is in `docs/design/`. Start with `docs/design/README.md`, then
 This is the BottleCast monorepo. Each part has its own folder.
 - `android/` is the Android app, a Gradle project with one module, `:app`, package `com.bottlecast.app`. **Before working in it, read `android/CLAUDE.md`**: its stack and layout, conventions, build and test commands, and gotchas.
 - `web/` is the static site on the production project's Firebase Hosting: the privacy and my-data pages, and the Terms of Use and Community guidelines once they're deployed. The app opens `/terms.html`, `/guidelines.html` and `/privacy.html` (`common/legal/LegalLinks.kt`), and Hosting has no `cleanUrls`, so those exact paths must keep working.
-- `contracts/` is the Hardhat project for the keepsake contract. Until slice 6 writes it, it holds Hardhat's sample `Lock` contract.
+- `contracts/` is the Hardhat 3 project (viem, node:test) for `BottleCastKeepsakes`, the keepsake contract. `contracts/README.md` says what it does, and how to test and deploy it.
 - `firebase/` holds `firestore.rules`, `firestore.indexes.json` and the rules' emulator tests (Node). `scripts/` holds the Python tools for Play uploads, the message migration and the admin claim; `scripts/README.md` says how to run each.
 - `worker/` is the Cloudflare Worker's home (TypeScript, wrangler). Until slice 6 builds the real one, it holds slice 5's CPU spike: bench routes, the scripts that drive and measure them, and the results in `worker/README.md`.
 - `docs/design/` is the design source for every platform (above).
@@ -23,7 +23,7 @@ This is the BottleCast monorepo. Each part has its own folder.
 - **Android:** the verify command and the rest are in `android/CLAUDE.md`.
 - **Worker:** `cd worker && npm ci && npm run check` typechecks it, and `npx wrangler deploy --dry-run` bundles it without uploading. `worker/README.md` says how to run the spike; its throwaway keys come from `node bench/keys.ts` and stay gitignored.
 - **Firestore rules:** `cd firebase && npm ci && npm run test:emulator` runs the rules tests in the emulator, against a demo project. It needs Java 21 or later on PATH (JBR 25 is) and Node 22.12 or later. Use the `firebase-tools` that `package.json` pins, never an older global CLI. The emulator doesn't check indexes, so try new queries against the debug project.
-- **Contracts:** `cd contracts && npm ci && npx hardhat test` compiles the contracts and runs their tests on Hardhat's in-process network.
+- **Contracts:** `cd contracts && npm ci && npx hardhat test` compiles the contract and runs its node:test tests on Hardhat's in-process network. `npm run check` type-checks the tests and the Ignition module. Both need Node 22.10 or later.
 - **Web:** plain HTML with no build step. Open the pages in `web/public/` in a browser to check them.
 
 ## Environments and safety
@@ -43,7 +43,7 @@ This is the BottleCast monorepo. Each part has its own folder.
 
   Show the owner the script's dry run (track, versionCode, notes) and get an explicit yes before running `release --yes`.
 - **Cloudflare:** wrangler deploys to the owner's own account, the only one it's logged in to. `wrangler.jsonc` names no `account_id`, so the public repo never holds it. Deploying, adding a cron or changing an account setting needs the owner's OK, and spike Workers are deleted once measured. Wrangler registers a workers.dev subdomain by itself if the account has none.
-- **Chain work** runs on Base Sepolia. Deploying to Base mainnet, or funding a mainnet minter, needs the owner's approval. Ask before deploying from `contracts/` to any network.
+- **Chain work** runs on Base Sepolia. Deploying to Base mainnet, or funding a mainnet minter, needs the owner's approval. Ask before deploying from `contracts/` to any network. The deployer's key lives in Hardhat's keystore (`npx hardhat keystore set BASE_SEPOLIA_DEPLOYER_KEY`), which the owner fills in. A deploy asks for the keystore's password, so it runs in the owner's own terminal.
 - Notes specific to one machine belong in `CLAUDE.local.md` (gitignored), not here.
 
 ## Git and PRs
