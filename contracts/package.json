@@ -1,19 +1,24 @@
 {
-  "name": "bottlecast-nft-contract",
-  "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "name": "bottlecast-contracts",
+  "private": true,
+  "type": "module",
+  "description": "BottleCast's keepsake contract, BottleCastKeepsakes, with its tests and its Ignition deploy module",
+  "engines": {
+    "node": ">=22.10.0"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "devDependencies": {
-    "@nomicfoundation/hardhat-toolbox": "^6.0.0",
-    "hardhat": "^2.25.0"
+  "scripts": {
+    "test": "hardhat test",
+    "check": "hardhat build && tsc --noEmit"
   },
   "dependencies": {
-    "@openzeppelin/contracts": "^5.3.0"
+    "@openzeppelin/contracts": "5.6.1"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-ignition": "3.1.9",
+    "@nomicfoundation/hardhat-toolbox-viem": "5.0.7",
+    "@types/node": "24.19.1",
+    "hardhat": "3.20.0",
+    "typescript": "6.0.3",
+    "viem": "2.57.4"
   }
 }

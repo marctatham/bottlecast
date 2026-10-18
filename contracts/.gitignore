@@ -1,17 +1,21 @@
-node_modules
-.env
+# Node modules
+/node_modules
 
-# Hardhat files
-/cache
+# Compilation output
+/dist
+
+# Hardhat build artifacts, and the types generated from them
 /artifacts
+/cache
+/types
 
-# TypeChain files
-/typechain
-/typechain-types
+# Environment files. Deploy keys live in Hardhat's keystore, never here
+.env
+.env.*
 
-# solidity-coverage files
+# Coverage and gas reports
 /coverage
-/coverage.json
+/.gas-snapshot
 
-# Hardhat Ignition default folder for deployments against a local node
-ignition/deployments/chain-31337
+# Hardhat Ignition's deployments to a local node
+/ignition/deployments/chain-31337
