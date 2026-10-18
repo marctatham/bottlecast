@@ -99,6 +99,8 @@ npx wrangler deploy --dry-run
 
 It stops everything when it's done, and on a failure it names the folder that holds each service's output.
 
+To try a route by hand, `npx wrangler dev` reads its secrets from `worker/.dev.vars` (gitignored): `FIREBASE_PROJECT_ID`, `MINTER_KEY`, `SIGNER_SEED`, `MARK_KEY` and `NONCE_KEY` (each key 32 bytes of hex), plus `FIRESTORE_EMULATOR_HOST` and `JWKS_URL` for a local emulator and test keys, or `FIREBASE_SERVICE_ACCOUNT` for a real project. Without them every route answers `not_configured`. `e2e/stack.ts` shows a working set.
+
 ## Deploying
 Each step needs the owner's OK (`CLAUDE.md`). Wrangler uses the owner's account, the only one it's logged in to.
 1. **The Worker:** `npx wrangler deploy`. It creates the KV namespace and the cron, and idles until it's configured. Revert the KV id it writes into `wrangler.jsonc`.

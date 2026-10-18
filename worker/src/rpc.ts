@@ -23,21 +23,25 @@ const TIMEOUT_MS = 8_000;
 /**
  * Sends the calls as one batch and returns their answers in order. A refused batch is sent again
  * one call at a time, unless `together` is set, which callers use when the answers must come from
- * the same node at the same moment; then a refusal throws RpcUnavailable.
+ * the same node at the same moment, or the endpoint is throttling or failing (HTTP 429 or 5xx); then
+ * it throws RpcUnavailable.
  */
 export async function rpcBatch(url: string, calls: RpcCall[], { together = false } = {}): Promise<RpcAnswer[]> {
   const body = calls.map((call, index) => ({ jsonrpc: "2.0", id: index + 1, method: call.method, params: call.params }));
-  const answer = await post(url, body);
+  const { status, answer } = await post(url, body);
   const answers = Array.isArray(answer) ? matchAnswers(answer, calls.length) : null;
   if (answers) return answers;
-  if (together) throw new RpcUnavailable(`The batch was refused: ${JSON.stringify(answer).slice(0, 160)}`);
+  // A throttled or failing endpoint would refuse each single call too, so they wait for the next run.
+  if (together || status === 429 || status >= 500) {
+    throw new RpcUnavailable(`The batch was refused (HTTP ${status}): ${JSON.stringify(answer).slice(0, 160)}`);
+  }
   const singles: RpcAnswer[] = [];
   for (const call of calls) singles.push(await rpcCall(url, call));
   return singles;
 }
 
 export async function rpcCall(url: string, call: RpcCall): Promise<RpcAnswer> {
-  const answer = await post(url, { jsonrpc: "2.0", id: 1, method: call.method, params: call.params });
+  const { answer } = await post(url, { jsonrpc: "2.0", id: 1, method: call.method, params: call.params });
   const parsed = toAnswer(answer);
   if (!parsed) throw new RpcUnavailable(`Not a JSON-RPC answer: ${JSON.stringify(answer).slice(0, 160)}`);
   return parsed;
@@ -77,7 +81,7 @@ function toAnswer(element: unknown): RpcAnswer | null {
   return { result };
 }
 
-async function post(url: string, body: unknown): Promise<unknown> {
+async function post(url: string, body: unknown): Promise<{ status: number; answer: unknown }> {
   let response: Response;
   try {
     response = await fetch(url, {
@@ -92,7 +96,7 @@ async function post(url: string, body: unknown): Promise<unknown> {
   // A JSON-RPC error can come with any HTTP status, so the body decides; one that isn't JSON can't.
   const text = await response.text();
   try {
-    return JSON.parse(text);
+    return { status: response.status, answer: JSON.parse(text) };
   } catch {
     throw new RpcUnavailable(`HTTP ${response.status}: ${text.slice(0, 160)}`);
   }

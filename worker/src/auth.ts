@@ -94,8 +94,8 @@ export class FirebaseKeys {
     let jwks = network ? null : await this.cache.get<CachedJwks>(KV_KEY, "json");
     if (!jwks || jwks.expiresAt <= now) {
       this.lastFetch = now;
-      const response = await fetch(this.url, { signal: AbortSignal.timeout(8_000) });
-      if (!response.ok) throw new HttpError(503, "busy");
+      const response = await fetch(this.url, { signal: AbortSignal.timeout(8_000) }).catch(() => null);
+      if (!response?.ok) throw new HttpError(503, "busy");
       const body = (await response.json()) as { keys?: Jwk[] };
       const maxAge = Number(/max-age=(\d+)/.exec(response.headers.get("Cache-Control") ?? "")?.[1] ?? 3600);
       jwks = { keys: Array.isArray(body.keys) ? body.keys : [], expiresAt: now + maxAge * 1000 };

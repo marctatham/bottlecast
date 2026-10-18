@@ -59,6 +59,19 @@ export class FirestoreError extends Error {
   get conflict(): boolean {
     return ["ABORTED", "FAILED_PRECONDITION", "ALREADY_EXISTS"].includes(this.status);
   }
+
+  /**
+   * Worth trying again later: a conflict, or Firestore unreachable, overloaded or out of quota for
+   * the day (Spark's limits halt rather than bill).
+   */
+  get busy(): boolean {
+    return (
+      this.conflict ||
+      ["UNAVAILABLE", "RESOURCE_EXHAUSTED", "DEADLINE_EXCEEDED"].includes(this.status) ||
+      this.httpStatus === 429 ||
+      this.httpStatus >= 500
+    );
+  }
 }
 
 const TIMEOUT_MS = 10_000;
@@ -93,7 +106,7 @@ export class Firestore {
       if (answer.transaction) transaction = answer.transaction;
       if (answer.found) docs.set(answer.found.name, decodeDoc(answer.found));
     }
-    return { docs, transaction };
+    return { docs, transaction: started(readIn, transaction) };
   }
 
   /** A query under `parent` (the root, or a document for its subcollections). */
@@ -107,7 +120,7 @@ export class Firestore {
       if (answer.transaction) transaction = answer.transaction;
       if (answer.document) docs.push(decodeDoc(answer.document));
     }
-    return { docs, transaction };
+    return { docs, transaction: started(readIn, transaction) };
   }
 
   /** Commits the writes, inside `transaction` if given. Returns each write's new update time. */
@@ -159,6 +172,14 @@ export class Firestore {
 function readOptions(readIn: ReadIn | undefined): object {
   if (!readIn) return {};
   return "newTransaction" in readIn ? { newTransaction: { readWrite: {} } } : { transaction: readIn.transaction };
+}
+
+/** A read that was to start a transaction must have started one, or nothing after it is atomic. */
+function started(readIn: ReadIn | undefined, transaction: string | undefined): string | undefined {
+  if (readIn && "newTransaction" in readIn && !transaction) {
+    throw new FirestoreError(0, "INTERNAL", "A read that should have started a transaction didn't");
+  }
+  return transaction;
 }
 
 function streamed<T>(answers: unknown): T[] {

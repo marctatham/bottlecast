@@ -101,5 +101,5 @@ export default {
 
 /** A contended transaction or an unreachable service: the caller, or the next run, tries again. */
 function isBusy(error: unknown): boolean {
-  return error instanceof RpcUnavailable || (error instanceof FirestoreError && (error.conflict || error.status === "UNAVAILABLE"));
+  return error instanceof RpcUnavailable || (error instanceof FirestoreError && error.busy);
 }

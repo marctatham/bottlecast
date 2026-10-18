@@ -123,6 +123,8 @@ class Run {
   private readonly contract: Hex;
   private readonly due: Doc;
   private readonly fs: Firestore;
+  /** The lease counts from the run's start, so it ends before the next minute's run, however slow this one was. */
+  private readonly leaseUntil: Date;
   private transaction: string | undefined;
 
   constructor(services: MinterServices, contract: Hex, due: Doc) {
@@ -130,6 +132,7 @@ class Run {
     this.contract = contract;
     this.due = due;
     this.fs = services.firestore;
+    this.leaseUntil = new Date(services.now() + LEASE_MS);
   }
 
   async go(): Promise<Outcome> {
@@ -245,7 +248,7 @@ class Run {
       ),
       this.stateWrite(seen.stateDoc, {
         inFlight: encodeFlight(flight),
-        leaseUntil: new Date(this.s.now() + LEASE_MS),
+        leaseUntil: this.leaseUntil,
         nextNonce: seen.state.nextNonce,
       }),
     ]);
@@ -320,10 +323,10 @@ class Run {
         return `waiting ${flight.messageId}`;
       case "wait":
         await this.rollback();
-        if (view.minedNonce <= BigInt(flight.nonce)) {
-          // Harmless if the node already has it; it may have dropped it.
-          await rpcCall(this.s.config.rpcUrl, { method: "eth_sendRawTransaction", params: [flight.raw] }).catch(() => undefined);
-        }
+        // The nonce is used: the receipt we're waiting for is the node's to catch up on, so the next run looks.
+        if (view.minedNonce > BigInt(flight.nonce)) return `waiting ${flight.messageId}`;
+        // Harmless if the node already has it; it may have dropped it.
+        await rpcCall(this.s.config.rpcUrl, { method: "eth_sendRawTransaction", params: [flight.raw] }).catch(() => undefined);
         return await this.afterSend(flight);
       case "replace": {
         const replacement = await this.replacement(flight, plan, bottle);
@@ -331,7 +334,7 @@ class Run {
           ...(seen.claimDoc && !plan.cancel
             ? [updateWrite(seen.claimDoc.name, { txHash: replacement.txHashes[replacement.txHashes.length - 1] }, { exists: true })]
             : []),
-          this.stateWrite(stateDoc, { inFlight: encodeFlight(replacement), leaseUntil: new Date(now + LEASE_MS) }),
+          this.stateWrite(stateDoc, { inFlight: encodeFlight(replacement), leaseUntil: this.leaseUntil }),
         ]);
         await rpcCall(this.s.config.rpcUrl, { method: "eth_sendRawTransaction", params: [replacement.raw] }).catch(() => undefined);
         return await this.afterSend(replacement);

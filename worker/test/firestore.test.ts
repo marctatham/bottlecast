@@ -159,6 +159,18 @@ describe("the client", () => {
     expect((query as FirestoreError).status).toBe("FAILED_PRECONDITION");
   });
 
+  it("calls quota, overload and contention busy, and a refused write not", () => {
+    for (const [http, status] of [[429, "RESOURCE_EXHAUSTED"], [503, "UNAVAILABLE"], [502, "UNKNOWN"], [409, "ABORTED"], [0, "UNAVAILABLE"]] as const) {
+      expect(new FirestoreError(http, status, "").busy, status).toBe(true);
+    }
+    expect(new FirestoreError(403, "PERMISSION_DENIED", "").busy).toBe(false);
+  });
+
+  it("refuses a transaction read that started no transaction", async () => {
+    const { firestore } = client(() => Response.json([{ missing: `${root}/claims/a` }]));
+    await expect(firestore.batchGet([`${root}/claims/a`], { newTransaction: true })).rejects.toBeInstanceOf(FirestoreError);
+  });
+
   it("calls an unreachable service UNAVAILABLE, and a rollback never throws", async () => {
     vi.stubGlobal("fetch", async () => {
       throw new TypeError("network down");

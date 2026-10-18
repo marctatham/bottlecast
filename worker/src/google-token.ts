@@ -3,6 +3,7 @@
 // while the isolate lives, and in KV for the next isolate, since nearly every run starts cold.
 import { base64ToBytes, base64UrlEncode, utf8 } from "./bytes.ts";
 import type { KeyValueCache, ServiceAccount } from "./config.ts";
+import { FirestoreError } from "./firestore.ts";
 
 const KV_KEY = "firestore-token";
 const SCOPE = "https://www.googleapis.com/auth/datastore";
@@ -24,6 +25,8 @@ export class AccessTokens {
     this.account = account;
     this.cache = cache;
     this.signingKey = importPrivateKey(account.privateKeyPem);
+    // A malformed key fails when a token is first asked for, not as an unhandled rejection at startup.
+    this.signingKey.catch(() => undefined);
   }
 
   async get(now: number): Promise<string> {
@@ -33,15 +36,20 @@ export class AccessTokens {
       this.memory = cached;
       return cached.token;
     }
-    const response = await fetch(this.account.tokenUri, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: new URLSearchParams({
-        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        assertion: await this.assertion(now),
-      }),
-      signal: AbortSignal.timeout(8_000),
-    });
+    const assertion = await this.assertion(now);
+    let response: Response;
+    try {
+      response = await fetch(this.account.tokenUri, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion }),
+        signal: AbortSignal.timeout(8_000),
+      });
+    } catch (error) {
+      throw new FirestoreError(0, "UNAVAILABLE", `The token exchange failed: ${error}`);
+    }
+    // Google unreachable or overloaded is worth another try; a refused key is a configuration error.
+    if (response.status === 429 || response.status >= 500) throw new FirestoreError(response.status, "UNAVAILABLE", "The token exchange");
     if (!response.ok) throw new Error(`The token exchange answered ${response.status}`);
     const body = (await response.json()) as { access_token?: unknown; expires_in?: unknown };
     if (typeof body.access_token !== "string" || typeof body.expires_in !== "number") {

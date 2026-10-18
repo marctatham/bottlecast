@@ -43,6 +43,16 @@ describe("rpcBatch", () => {
     expect(answers).toEqual([{ result: "0x1" }, { result: "0x1" }, { result: "0x1" }]);
   });
 
+  it("doesn't send single calls to an endpoint that's throttling or failing", async () => {
+    const bodies: unknown[] = [];
+    vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
+      bodies.push(init.body);
+      return Response.json({ jsonrpc: "2.0", id: null, error: { code: -32005, message: "rate limited" } }, { status: 429 });
+    });
+    await expect(rpcBatch("https://rpc.example", calls)).rejects.toBeInstanceOf(RpcUnavailable);
+    expect(bodies).toHaveLength(1);
+  });
+
   it("refuses to split a batch whose answers must come together", async () => {
     node(() => ({ jsonrpc: "2.0", id: null, error: { code: -32600, message: "batch refused" } }));
     await expect(rpcBatch("https://rpc.example", calls, { together: true })).rejects.toBeInstanceOf(RpcUnavailable);
