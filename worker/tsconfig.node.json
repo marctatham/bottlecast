@@ -1,3 +1,5 @@
+// The Node side: the tests, the bench, the local end-to-end run and the deploy scripts. They import src/, so every module
+// there but index.ts keeps to types Node has too (config.ts's KeyValueCache stands in for KV).
 {
   "compilerOptions": {
     "target": "es2024",
@@ -12,5 +14,5 @@
     "erasableSyntaxOnly": true,
     "skipLibCheck": true
   },
-  "include": ["."]
+  "include": ["test", "bench", "e2e", "scripts", "vitest.config.ts"]
 }

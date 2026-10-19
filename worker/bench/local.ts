@@ -1,177 +1,105 @@
-// A first read on this machine, before anything is deployed: each operation's
-// first call in a fresh process (secp256k1's tables included), then its cost
-// over many calls. Cloudflare's CPUs differ, so the deployed numbers decide.
-// It first checks that the WebAssembly signer gives noble's bytes, and stops
-// if it doesn't.
-//   node bench/local.ts [calls] [noble|wasm]   which signer's first call goes first
-import { strict as assert } from "node:assert";
+// A first read on this machine of the Worker's hot paths, before anything is deployed: each one's
+// first call in a fresh process, then its cost over many calls. Cloudflare's CPUs differ, and only
+// the deployed Worker's cold figures count (README.md), so this is a guide, not the measurement.
+//   node bench/local.ts [calls]
 import { readFileSync } from "node:fs";
-import { performance } from "node:perf_hooks";
-import type { JWK } from "jose";
-import { encodeFunctionData, hexToBytes, parseAbi, serializeTransaction, toHex, type Hex } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
-import {
-  cronMint,
-  cronMintWasm,
-  linkInvocation,
-  linkInvocationWasm,
-  mintInvocation,
-  mintInvocationWasm,
-  PLACEHOLDER_ADDRESS,
-  SAMPLE_MESSAGE_ID,
-  SAMPLE_TEXT,
-  SAMPLE_UID,
-  signMint,
-  signMintWasm,
-  signServiceAccountJwt,
-  SPIKE_SA_EMAIL,
-  verifiedMark,
-  verifyIdToken,
-  verifySiwe,
-  verifySiweWasm,
-  type SpikeSecrets,
-} from "../src/ops.ts";
-import { encodeMintCall, serializeEip1559 } from "../src/mint-tx.ts";
+import { exportJWK, generateKeyPair, SignJWT } from "jose";
+import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { checkClaims, parseJwt } from "../src/auth.ts";
+import { hexToBytes, type Hex } from "../src/bytes.ts";
+import { decodeDoc, DELETE_FIELD, SERVER_TIME, updateWrite } from "../src/firestore.ts";
+import { personalMessageHash, recoverSigner, toChecksumAddress } from "../src/eth.ts";
+import { writerMark } from "../src/minter.ts";
+import { encodeMintCall, signEip1559 } from "../src/mint-tx.ts";
 import { instantiateSecp256k1 } from "../src/secp256k1-wasm.ts";
-import { idToken, makeKeys, siweBody } from "./fixtures.ts";
+import { buildSiweMessage, parseSiweMessage, SIWE_STATEMENT, siweNonce } from "../src/siwe.ts";
 
 const calls = Number(process.argv[2] ?? 500);
-const first = process.argv[3] === "wasm" ? "wasm" : "noble";
-const keys = await makeKeys();
-const env = keys.worker as unknown as SpikeSecrets;
-const jwk = JSON.parse(env.SPIKE_ID_JWK) as JWK;
-
-type Op = () => Promise<unknown>;
-const mark = () => verifiedMark(env.SPIKE_HMAC_KEY, SAMPLE_UID, SAMPLE_MESSAGE_ID);
-const sign: Op = async () => signMint(env.SPIKE_MINTER_KEY, await mark(), 0);
-
-// Each signer's first call: the one that goes first in the process also pays
-// for compiling viem's encoding and the first HMAC, so run it both ways.
-// noble's first call builds its precomputed tables. The WebAssembly module is
-// compiled from the file here; the Worker compiles it at startup.
-const wasmFile = readFileSync(new URL("../node_modules/tiny-secp256k1/lib/secp256k1.wasm", import.meta.url));
-let secp!: ReturnType<typeof instantiateSecp256k1>;
-const instantiate = await measure(async () => {
-  secp = instantiateSecp256k1(new WebAssembly.Module(wasmFile));
+const wasm = readFileSync(new URL("../node_modules/tiny-secp256k1/lib/secp256k1.wasm", import.meta.url));
+const secp = instantiateSecp256k1(new WebAssembly.Module(wasm), crypto.getRandomValues(new Uint8Array(32)));
+const minterKey = hexToBytes(generatePrivateKey());
+const wallet = privateKeyToAccount(generatePrivateKey());
+const hmacKey = await crypto.subtle.importKey("raw", crypto.getRandomValues(new Uint8Array(32)), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+const text = "Leave the porch light on for the people still finding their way home. ".repeat(4).slice(0, 280);
+const issuedAt = new Date().toISOString();
+const message = buildSiweMessage({
+  domain: "bottling-messages.web.app",
+  address: toChecksumAddress(wallet.address.toLowerCase() as Hex),
+  statement: SIWE_STATEMENT,
+  uri: "https://bottling-messages.web.app",
+  chainId: 84532,
+  nonce: await siweNonce(hmacKey, "kT7wq2Xr9mZp4LsVb8NcYe3HdQ1a", wallet.address.toLowerCase() as Hex, issuedAt),
+  issuedAt,
+  expirationTime: new Date(Date.now() + 600_000).toISOString(),
 });
-const signWasm: Op = async () => signMintWasm(secp, env.SPIKE_MINTER_KEY, PLACEHOLDER_ADDRESS, await mark(), 0);
-const firsts: [string, Op][] = [
-  ["sign", sign],
-  ["sign-w", signWasm],
-];
-if (first === "wasm") firsts.reverse();
-console.log(`Text on-chain: ${new TextEncoder().encode(SAMPLE_TEXT).length} bytes`);
-console.log(`WebAssembly module, compiled and instantiated: ${instantiate.cpu.toFixed(2)} ms CPU`);
-for (const [index, [name, op]] of firsts.entries()) {
-  const cold = await measure(op);
-  const when = index === 0 ? "first in the process" : `first, after ${firsts[0][0]}`;
-  console.log(`${name}, ${when}: ${cold.wall.toFixed(2)} ms wall, ${cold.cpu.toFixed(2)} ms CPU`);
-}
-console.log();
+const signature = hexToBytes(await wallet.signMessage({ message }));
+const { privateKey, publicKey } = await generateKeyPair("RS256", { extractable: true });
+const rsaKey = await crypto.subtle.importKey("jwk", await exportJWK(publicKey), { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["verify"]);
+const token = await new SignJWT({ auth_time: Math.floor(Date.now() / 1000), firebase: { identities: { "google.com": ["1"] } } })
+  .setProtectedHeader({ alg: "RS256", kid: "bench" })
+  .setIssuer("https://securetoken.google.com/demo-bottlecast")
+  .setAudience("demo-bottlecast")
+  .setSubject("kT7wq2Xr9mZp4LsVb8NcYe3HdQ1a")
+  .setIssuedAt()
+  .setExpirationTime("1h")
+  .sign(privateKey);
 
-const token = await idToken(keys.driver.idPrivateJwk);
-const siwe = await siweBody(keys.driver.walletKey);
-
-// RFC 6979 makes both signatures deterministic, so the transactions must match
-// byte for byte, and both paths must recover the wallet that signed.
-const markHex = await mark();
-const recipient = privateKeyToAccount(env.SPIKE_MINTER_KEY).address;
-for (let nonce = 0; nonce <= 20; nonce++) {
-  const wasm = signMintWasm(secp, env.SPIKE_MINTER_KEY, recipient, markHex, nonce);
-  assert.equal(wasm, await signMint(env.SPIKE_MINTER_KEY, markHex, nonce));
-}
-const wallet = privateKeyToAccount(keys.driver.walletKey).address;
-const v = parseInt(siwe.signature.slice(-2), 16);
-const withV = (yParityOrV: number): Hex => `${siwe.signature.slice(0, -2)}${yParityOrV.toString(16).padStart(2, "0")}` as Hex;
-assert.equal(await verifySiwe(siwe.message, siwe.signature, siwe.nonce), wallet);
-assert.equal(verifySiweWasm(secp, siwe.message, siwe.signature, siwe.nonce), wallet);
-assert.equal(verifySiweWasm(secp, siwe.message, withV(v - 27), siwe.nonce), wallet);
-// A changed r, or the other recovery id, recovers another key or none.
-const otherR = `${siwe.signature.slice(0, 10)}${siwe.signature[10] === "0" ? "1" : "0"}${siwe.signature.slice(11)}` as Hex;
-assert.throws(() => verifySiweWasm(secp, siwe.message, otherR, siwe.nonce));
-assert.throws(() => verifySiweWasm(secp, siwe.message, withV(v === 27 ? 28 : 27), siwe.nonce));
-assert.throws(() => verifySiweWasm(secp, siwe.message, withV(29), siwe.nonce));
-console.log("The WebAssembly signer matches noble: 21 mints byte for byte, and the SIWE signer");
-
-// The hand encoding against viem's, past the sample bottle: empty and
-// word-boundary strings, uint64's ends, nonces either side of RLP's one-byte
-// and length-prefix limits, and signatures whose r or s starts with zeros.
-const mintAbi = parseAbi([
-  "function mint(address to, string messageId, string text, uint64 castAt, string penName, bytes32 writerMark)",
-]);
-const mintCalls = [
-  { messageId: "", text: "", penName: "", castAt: 0n },
-  { messageId: "a".repeat(32), text: "b".repeat(33), penName: "c".repeat(31), castAt: 2n ** 64n - 1n },
-  { messageId: SAMPLE_MESSAGE_ID, text: "🌊".repeat(70), penName: "Driftwood", castAt: 1_791_763_200n },
-];
-for (const call of mintCalls) {
-  const args = [wallet, call.messageId, call.text, call.castAt, call.penName, markHex] as const;
-  const viem = encodeFunctionData({ abi: mintAbi, functionName: "mint", args: [...args] });
-  const hand = toHex(encodeMintCall({ ...call, to: hexToBytes(wallet), writerMark: hexToBytes(markHex) }));
-  assert.equal(hand, viem);
-  for (const nonce of [0, 1, 127, 128, 255, 256, 65_535, 16_777_216]) {
-    const fields = { chainId: 84532, nonce, maxPriorityFeePerGas: 1n, maxFeePerGas: 10n ** 12n, gas: 400_000n, value: 0n };
-    const viemTx = { ...fields, type: "eip1559", to: wallet, data: viem } as const;
-    const handTx = { ...fields, to: hexToBytes(wallet), data: hexToBytes(viem) };
-    assert.equal(toHex(serializeEip1559(handTx)), serializeTransaction(viemTx));
-    for (const [r, s, yParity] of [
-      [`0x00${"ab".repeat(31)}`, `0x0000${"cd".repeat(30)}`, 0],
-      [`0x${"7f".repeat(32)}`, `0x00${"01".repeat(31)}`, 1],
-    ] as const) {
-      const signed = toHex(serializeEip1559(handTx, { yParity, r: hexToBytes(r), s: hexToBytes(s) }));
-      assert.equal(signed, serializeTransaction(viemTx, { r, s, yParity }));
-    }
-  }
-}
-// And refuses what viem refused, rather than encoding it wrongly.
-const goodCall = { ...mintCalls[0], to: hexToBytes(wallet), writerMark: hexToBytes(markHex) };
-assert.throws(() => encodeMintCall({ ...goodCall, to: new Uint8Array(21) }), RangeError);
-assert.throws(() => encodeMintCall({ ...goodCall, writerMark: new Uint8Array(33) }), RangeError);
-assert.throws(() => encodeMintCall({ ...goodCall, castAt: 2n ** 64n }), RangeError);
-assert.throws(() => encodeMintCall({ ...goodCall, castAt: -1n }), RangeError);
-const goodTx = { chainId: 84532, nonce: 0, maxPriorityFeePerGas: 1n, maxFeePerGas: 2n, gas: 1n, value: 0n, to: hexToBytes(wallet), data: new Uint8Array() };
-assert.throws(() => serializeEip1559({ ...goodTx, nonce: -1 }), RangeError);
-assert.throws(() => serializeEip1559({ ...goodTx, to: new Uint8Array(32) }), RangeError);
-assert.throws(() => serializeEip1559(goodTx, { yParity: 2, r: new Uint8Array(32), s: new Uint8Array(32) }), RangeError);
-// The signer refuses a key outside [1, n) before it reaches libsecp256k1.
-assert.throws(() => secp.signRecoverable(new Uint8Array(32).fill(1), new Uint8Array(32)), TypeError);
-assert.throws(() => secp.signRecoverable(new Uint8Array(32).fill(1), new Uint8Array(32).fill(0xff)), TypeError);
-console.log("The hand encoding matches viem: 3 calls, 24 transactions, 48 signed, and refuses bad input\n");
-
+type Op = () => unknown;
 const ops: Record<string, Op> = {
-  hmac: mark,
-  satoken: () => signServiceAccountJwt(env.SPIKE_SA_PKCS8, SPIKE_SA_EMAIL),
-  idtoken: () => verifyIdToken(token, jwk),
-  siwe: () => verifySiwe(siwe.message, siwe.signature, siwe.nonce),
-  sign,
-  mint: () => mintInvocation(env, token),
-  link: () => linkInvocation(env, token, siwe),
-  cron: () => cronMint(env),
-  "siwe-w": async () => verifySiweWasm(secp, siwe.message, siwe.signature, siwe.nonce),
-  "sign-w": signWasm,
-  "mint-w": () => mintInvocationWasm(secp, env, token),
-  "link-w": () => linkInvocationWasm(secp, env, token, siwe),
-  "cron-w": () => cronMintWasm(secp, env),
+  mint: () =>
+    signEip1559(secp, minterKey, {
+      chainId: 84532,
+      nonce: 7,
+      maxPriorityFeePerGas: 1_000_000n,
+      maxFeePerGas: 2_000_000n,
+      gas: 480_000n,
+      to: hexToBytes(wallet.address),
+      value: 0n,
+      data: encodeMintCall({
+        to: hexToBytes(wallet.address),
+        messageId: "Vb3kQm9TzR2xLp8sWn4E",
+        text,
+        castAt: 1_791_763_200n,
+        penName: "Driftwood",
+        writerMark: new Uint8Array(32),
+        glass: 0,
+      }),
+    }),
+  siwe: () => {
+    const fields = parseSiweMessage(message)!;
+    if (buildSiweMessage(fields) !== message) throw new Error("SIWE didn't round-trip");
+    return recoverSigner(secp, personalMessageHash(message), signature);
+  },
+  idtoken: async () => {
+    const jwt = parseJwt(token)!;
+    if (!(await crypto.subtle.verify("RSASSA-PKCS1-v1_5", rsaKey, jwt.signature, jwt.signingInput))) throw new Error("bad");
+    return checkClaims(jwt.payload, "demo-bottlecast", Math.floor(Date.now() / 1000));
+  },
+  nonce: () => siweNonce(hmacKey, "kT7wq2Xr9mZp4LsVb8NcYe3HdQ1a", wallet.address.toLowerCase() as Hex, issuedAt),
+  mark: () => writerMark(hmacKey, "kT7wq2Xr9mZp4LsVb8NcYe3HdQ1a", "Vb3kQm9TzR2xLp8sWn4E"),
+  firestore: () => {
+    const doc = decodeDoc({
+      name: "projects/p/databases/(default)/documents/claims/Vb3kQm9TzR2xLp8sWn4E",
+      updateTime: "2026-10-12T09:00:00.123456Z",
+      fields: { status: { stringValue: "cooling" }, sealAfter: { timestampValue: "2026-10-13T09:00:00Z" }, nonce: { integerValue: "7" } },
+    });
+    return updateWrite(doc.name, { status: "minting", nonce: 7, delayedSince: DELETE_FIELD, mintedAt: SERVER_TIME });
+  },
 };
 
-console.log(`op        first CPU   p50 CPU   p99 CPU   max CPU   (ms, ${calls} calls)`);
+console.log(`op          first CPU   p50 CPU   p99 CPU   max CPU   (ms, ${calls} calls)`);
 for (const [name, op] of Object.entries(ops)) {
-  const firstCall = await measure(op);
+  const first = await measure(op);
   const samples: number[] = [];
-  for (let i = 0; i < calls; i++) samples.push((await measure(op)).cpu);
+  for (let i = 0; i < calls; i++) samples.push(await measure(op));
   samples.sort((a, b) => a - b);
   const at = (q: number) => samples[Math.min(samples.length - 1, Math.floor(q * samples.length))];
-  console.log(
-    [name.padEnd(8), firstCall.cpu, at(0.5), at(0.99), samples[samples.length - 1]]
-      .map((v) => (typeof v === "number" ? v.toFixed(2).padStart(9) : v))
-      .join(" "),
-  );
+  console.log([name.padEnd(10), first, at(0.5), at(0.99), samples[samples.length - 1]].map((v) => (typeof v === "number" ? v.toFixed(2).padStart(9) : v)).join(" "));
 }
 
-async function measure(op: Op): Promise<{ wall: number; cpu: number }> {
-  const start = performance.now();
+async function measure(op: Op): Promise<number> {
   const cpu = process.cpuUsage();
   await op();
   const used = process.cpuUsage(cpu);
-  return { wall: performance.now() - start, cpu: (used.user + used.system) / 1000 };
+  return (used.user + used.system) / 1000;
 }

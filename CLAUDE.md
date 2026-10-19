@@ -15,13 +15,13 @@ This is the BottleCast monorepo. Each part has its own folder.
 - `web/` is the static site on the production project's Firebase Hosting: the privacy and my-data pages, and the Terms of Use and Community guidelines once they're deployed. The app opens `/terms.html`, `/guidelines.html` and `/privacy.html` (`common/legal/LegalLinks.kt`), and Hosting has no `cleanUrls`, so those exact paths must keep working.
 - `contracts/` is the Hardhat 3 project (viem, node:test) for `BottleCastKeepsakes`, the keepsake contract. `contracts/README.md` says what it does, and how to test and deploy it.
 - `firebase/` holds `firestore.rules`, `firestore.indexes.json` and the rules' emulator tests (Node). `scripts/` holds the Python tools for Play uploads, the message migration and the admin claim; `scripts/README.md` says how to run each.
-- `worker/` is the Cloudflare Worker's home (TypeScript, wrangler). Until slice 6 builds the real one, it holds slice 5's CPU spike: bench routes, the scripts that drive and measure them, and the results in `worker/README.md`.
+- `worker/` is the Cloudflare Worker (TypeScript, wrangler): it links wallets for the app, and a once-a-minute cron seals kept bottles as keepsakes. `worker/README.md` has its routes and error codes, the data it writes, and how to run, deploy and measure it.
 - `docs/design/` is the design source for every platform (above).
 
 ## Build and verify
 - There is no CI, so these commands are the only gate.
 - **Android:** the verify command and the rest are in `android/CLAUDE.md`.
-- **Worker:** `cd worker && npm ci && npm run check` typechecks it, and `npx wrangler deploy --dry-run` bundles it without uploading. `worker/README.md` says how to run the spike; its throwaway keys come from `node bench/keys.ts` and stay gitignored.
+- **Worker:** `cd worker && npm ci && npm run check && npm test` typechecks it and runs its Vitest tests, and `npx wrangler deploy --dry-run` bundles it without uploading. `npm run e2e` runs it end to end on this machine, against a Hardhat node, the Firestore emulator and `wrangler dev`, with throwaway keys. It needs `contracts/` and `firebase/` installed, Java 21 or later, and ports 8545, 8180 and 8799 free.
 - **Firestore rules:** `cd firebase && npm ci && npm run test:emulator` runs the rules tests in the emulator, against a demo project. It needs Java 21 or later on PATH (JBR 25 is) and Node 22.12 or later. Use the `firebase-tools` that `package.json` pins, never an older global CLI. The emulator doesn't check indexes, so try new queries against the debug project.
 - **Contracts:** `cd contracts && npm ci && npx hardhat test` compiles the contract and runs its node:test tests on Hardhat's in-process network. `npm run check` type-checks the tests and the Ignition module. Both need Node 22.10 or later.
 - **Web:** plain HTML with no build step. Open the pages in `web/public/` in a browser to check them.
@@ -42,7 +42,8 @@ This is the BottleCast monorepo. Each part has its own folder.
   - upload with `scripts/play_upload.py`. It needs `gcloud`, `bundletool`, and `PLAY_UPLOAD_ACCOUNT` when the active gcloud account isn't the right one.
 
   Show the owner the script's dry run (track, versionCode, notes) and get an explicit yes before running `release --yes`.
-- **Cloudflare:** wrangler deploys to the owner's own account, the only one it's logged in to. `wrangler.jsonc` names no `account_id`, so the public repo never holds it. Deploying, adding a cron or changing an account setting needs the owner's OK, and spike Workers are deleted once measured. Wrangler registers a workers.dev subdomain by itself if the account has none.
+- **Cloudflare:** wrangler deploys to the owner's own account, the only one it's logged in to. `wrangler.jsonc` names no `account_id` and no KV namespace id, so the public repo holds neither: a deploy writes the KV id back into the file, so revert it. Deploying, adding a cron or changing an account setting needs the owner's OK, and spike Workers are deleted once measured. Wrangler registers a workers.dev subdomain by itself if the account has none.
+  - The Worker's own keys come from `worker/scripts/new-secrets.ts`, which pipes them straight into `wrangler secret bulk` and prints only the minter's address. The service account's key goes from `gcloud` straight into `wrangler secret put`. Neither is ever printed or written to disk.
 - **Chain work** runs on Base Sepolia. Deploying to Base mainnet, or funding a mainnet minter, needs the owner's approval. Ask before deploying from `contracts/` to any network. The deployer's key lives in Hardhat's keystore (`npx hardhat keystore set BASE_SEPOLIA_DEPLOYER_KEY`), which the owner fills in. A deploy asks for the keystore's password, so it runs in the owner's own terminal.
 - Notes specific to one machine belong in `CLAUDE.local.md` (gitignored), not here.
 
@@ -88,6 +89,12 @@ These involve the Firestore rules or the Worker as well as the app. Android's ow
 - **Kept bottles and the rules:** `keptAt` on a message is set once and never removed, so the rules know a bottle was kept without reading its claim (a billed access call). Rules read it with `.get('keptAt', null)`, because older documents lack it. A kept bottle never goes back to the sea, even through moderation.
 - **Deleting an account** needs a fresh Google sign-in with the same account, and every write waits for the server. The rules allow most of the deletes only while `deletions/{uid}` exists, and each of those reads it, so they go in batches of 10. An `orphaned` bottle (its writer deleted their account while it was held) has a null `userId`, which the mapper reads as `""`.
 - **Worker CPU on the Free plan:** 10 ms per invocation, cron included, and the owner won't pay for more. With BottleCast's traffic nearly every invocation starts on a fresh isolate, where V8 still interprets JavaScript: noble's secp256k1 costs 20–40 ms there, and `jose`, viem and keccak a few ms each.
-  - What fits (`worker/src/spike-wasm.ts`): secp256k1 as WebAssembly, the mint encoded by hand, and every hot path run 30 times at module scope, which leaves a cold mint at 1–6 ms.
+  - What fits (`worker/src/warm-up.ts`): secp256k1 as WebAssembly, the mint encoded by hand, and every hot path run 30 times at module scope, which left a cold mint at 1–6 ms in slice 5's spike. Keep viem, jose and noble out of `worker/src/` (they're dev dependencies, for tests and the bench).
   - Workers allows no random numbers at module scope, so the signer's blinding is seeded from a secret. It won't compile WebAssembly from bytes either, so a `.wasm` is imported as a module.
   - A Worker's clock stands still while it computes, so measure CPU with `wrangler tail --format json` (`cpuTime`) or Workers Logs (`$workers.cpuTimeMs`), never with `Date.now()`.
+- **Only the cron mints,** one claim a run, so the minter's nonce never races. A mint is recorded in `minter/state` (with its signed transaction) and on its claim before it's sent, so a run that dies leaves it for the next run to finish. Never mint from a route.
+- **Firestore over REST** (`worker/src/firestore.ts`):
+  - an `update` creates a missing document unless it carries the precondition `exists: true`, so the Worker adds it wherever that matters;
+  - a read-write transaction locks what it reads (pessimistic concurrency, the Standard edition's default), so roll back one you don't commit;
+  - the emulator takes `Bearer owner` for the Worker and an unsigned mock token for a user, whose writes the rules check.
+- **Asking to seal is the keeper's own write,** checked by the rules: the claim goes from `pending_wallet` or `failed` to `cooling` with `sealAfter` exactly the cast plus 24 hours, `to` a lowercase address the keeper has linked, and `error` removed. Every later status is the Worker's.

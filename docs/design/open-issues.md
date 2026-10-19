@@ -65,13 +65,13 @@ When an item is settled, record the answer in [decisions.md](decisions.md), fix 
     - noble's secp256k1 ran 25–41 ms cold, and 4–10 ms even with a warm-up at module scope.
     - secp256k1 as WebAssembly, the mint encoded by hand, and every hot path run 30 times at module scope bring a cold mint to 1–6 ms, a cold link to 1–5 ms and a cron mint to 1–3 ms.
     - A cron mint needs about 7 of the 50 subrequests.
-  - Proposed for slice 6:
-    - build on `worker/src/spike-wasm.ts`: the WebAssembly signer with its own blinding-seed secret, the hand-encoded mint and the startup warm-up;
-    - sign the Firestore token once an hour, not once a mint;
-    - read the chain with one batch, falling back to single calls or using a dedicated RPC endpoint, since Base Sepolia's public one refused some batches;
-    - measure the real invocations again, with Firestore REST and the Firebase JWKS in them.
+  - Slice 6's second PR built the Worker that way (`worker/README.md`):
+    - the WebAssembly signer with its own blinding-seed secret, the hand-encoded mint, and a 30-round warm-up at startup;
+    - the Firestore token signed once an hour and kept in KV, and Google's keys kept there too;
+    - one batched chain read, falling back to single calls when Base Sepolia's public endpoint refuses a batch;
+    - no viem or jose in the Worker at all.
 
-    In reserve: keccak as WebAssembly, and the SIWE check on-chain through `eth_call`.
+    Still to do: measure the real invocations again, cold, on the Free plan, once it's deployed. In reserve: keccak as WebAssembly, and the SIWE check on-chain through `eth_call`.
   - The nonce is settled (2026-10-18, [decisions.md](decisions.md)): minting runs only in the once-a-minute cron, one claim per run under a Firestore lease, so the single minter's nonce never races.
   - Still open: someone has to watch the minter's balance (the Base Sepolia faucet gives 0.1 ETH per rolling 24 hours).
 

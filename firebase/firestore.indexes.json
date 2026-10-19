@@ -51,6 +51,14 @@
       ]
     },
     {
+      "collectionGroup": "claims",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "sealAfter", "order": "ASCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "daily",
       "queryScope": "COLLECTION",
       "fields": [

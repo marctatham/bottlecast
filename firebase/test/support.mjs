@@ -4,7 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { initializeTestEnvironment } from '@firebase/rules-unit-testing';
 import {
-  Bytes, Timestamp, doc, increment, serverTimestamp, setDoc, setLogLevel, updateDoc, writeBatch,
+  Bytes, Timestamp, deleteField, doc, increment, serverTimestamp, setDoc, setLogLevel, updateDoc, writeBatch,
 } from 'firebase/firestore';
 
 // Denied writes are the point of most tests; keep the SDK from logging each one.
@@ -101,12 +101,14 @@ export async function seedBottle(id, overrides = {}) {
 }
 
 // A hold by `finderUid`, `ageMillis` old: the message, the finder's find and their daily record,
-// all stamped with the same time, as one find commit would leave them.
-export async function seedHold(id, finderUid, ageMillis, { findStatus = 'held', reportCount = 0, findCount = 1 } = {}) {
+// all stamped with the same time, as one find commit would leave them. `message` overrides the bottle.
+export async function seedHold(id, finderUid, ageMillis, {
+  findStatus = 'held', reportCount = 0, findCount = 1, message = {},
+} = {}) {
   const foundAt = Timestamp.fromMillis(Date.now() - ageMillis);
   const date = utcDate(Date.now() - ageMillis);
   await seed(async (db) => {
-    await setDoc(doc(db, 'messages', id), bottle(id, { status: 'found', foundAt, findCount, reportCount }));
+    await setDoc(doc(db, 'messages', id), bottle(id, { status: 'found', foundAt, findCount, reportCount, ...message }));
     await setDoc(doc(db, 'finds', `${id}_${finderUid}`), {
       messageId: id, finderUid, foundAt, dailyId: `${finderUid}_${date}`, status: findStatus,
     });
@@ -118,8 +120,8 @@ export async function seedHold(id, finderUid, ageMillis, { findStatus = 'held', 
 }
 
 // A bottle `keeperUid` found `ageMillis` ago and then kept, as a find and a keep would leave it.
-export async function seedKept(id, keeperUid, ageMillis, { status = 'kept' } = {}) {
-  await seedHold(id, keeperUid, ageMillis);
+export async function seedKept(id, keeperUid, ageMillis, { status = 'kept', message = {} } = {}) {
+  await seedHold(id, keeperUid, ageMillis, { message });
   const keptAt = Timestamp.fromMillis(Date.now() - ageMillis + 60 * 1000);
   await seed(async (db) => {
     await updateDoc(doc(db, 'messages', id), { status, keptAt });
@@ -127,6 +129,31 @@ export async function seedKept(id, keeperUid, ageMillis, { status = 'kept' } = {
     await setDoc(doc(db, 'claims', id), { messageId: id, keeperUid, status: 'pending_wallet', keptAt });
   });
   return keptAt;
+}
+
+// Wallet addresses are stored lowercase, as the Worker keys them.
+export const W1 = `0x${'ab'.repeat(20)}`;
+export const W2 = `0x${'cd'.repeat(20)}`;
+
+// A wallet the Worker linked to `uid`: the account's wallet and the index entry naming it.
+export async function seedWallet(uid, address, { receiving = true } = {}) {
+  await seed(async (db) => {
+    await setDoc(doc(db, 'users', uid, 'wallets', address), {
+      address, receiving, linkedAt: Timestamp.now(), walletName: 'Rainbow',
+    });
+    await setDoc(doc(db, 'walletIndex', address), { uid, linkedAt: Timestamp.now() });
+  });
+}
+
+// The end of a bottle's 24-hour safety check, counted from its cast (spec §1.7).
+export function sealAfterFor(createdAt) {
+  return Timestamp.fromMillis(createdAt.toMillis() + DAY);
+}
+
+// Asking to seal, as the app writes it: the claim moves to cooling, naming the wallet, and drops any
+// error a failed seal left.
+export function askToSealWrite(id, to, sealAfter, overrides = {}) {
+  return ['update', ['claims', id], { status: 'cooling', sealAfter, to, error: deleteField(), ...overrides }];
 }
 
 // An account part-way through being deleted (spec §3.17): its tombstone.
