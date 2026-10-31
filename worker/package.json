@@ -27,6 +27,6 @@
     "typescript": "6.0.3",
     "viem": "2.57.4",
     "vitest": "5.0.3",
-    "wrangler": "4.151.0"
+    "wrangler": "4.156.0"
   }
 }
