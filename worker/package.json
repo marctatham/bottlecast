@@ -18,7 +18,7 @@
   },
   "dependencies": {
     "@noble/hashes": "1.8.0",
-    "tiny-secp256k1": "2.2.4"
+    "tiny-secp256k1": "2.2.5"
   },
   "devDependencies": {
     "@noble/curves": "1.9.1",
